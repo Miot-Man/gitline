@@ -8,6 +8,8 @@ const SEP = '\x1f';
 const REC = '\x1e';
 
 // Read at call time so changes to the environment (e.g. which global config to use) take effect.
+// Every git/gh call passes windowsHide: on Windows a console program otherwise flashes a console window,
+// which also takes focus from Gitline (closing any open menu).
 const ENV = () => ({
   ...process.env,
   LC_ALL: 'C',
@@ -21,7 +23,7 @@ function git(cwd, args, { allowFail = false, env } = {}) {
     execFile(
       'git',
       ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args],
-      { cwd, env: { ...ENV(), ...env }, maxBuffer: 512 * 1024 * 1024 },
+      { cwd, env: { ...ENV(), ...env }, maxBuffer: 512 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         if (err && !allowFail) {
           reject(new Error((stderr || stdout || err.message).trim()));
@@ -35,7 +37,7 @@ function git(cwd, args, { allowFail = false, env } = {}) {
 
 function gitInput(cwd, args, input) {
   return new Promise((resolve, reject) => {
-    const p = spawn('git', args, { cwd, env: ENV() });
+    const p = spawn('git', args, { cwd, env: ENV(), windowsHide: true });
     let out = '';
     let errOut = '';
     p.stdout.on('data', (d) => (out += d));
@@ -49,7 +51,7 @@ function gitInput(cwd, args, input) {
 // Like git(), but returns stdout as a Buffer (for binary blobs).
 function gitBuffer(cwd, args) {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, env: ENV(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) =>
+    execFile('git', args, { cwd, env: ENV(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) =>
       err ? reject(new Error(stderr.toString().trim() || err.message)) : resolve(stdout)
     );
   });
@@ -71,7 +73,7 @@ function gh(cwd, args) {
     execFile(
       findGh(),
       args,
-      { cwd, env: { ...ENV(), GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024 },
+      { cwd, env: { ...ENV(), GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         if (err) {
           const msg = err.code === 'ENOENT' ? 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com.' : (stderr || stdout || err.message).trim();

@@ -188,7 +188,10 @@ test('branch selector lists remote branches and checks them out', async ({ gl })
   gl.git('branch', '-q', '-D', 'feature/remote-only');
   await gl.open();
 
+  // Wait until the repo has loaded its remote branches before opening the menu.
+  await expect(page.locator('.side-item', { hasText: 'remote-only' })).toBeVisible();
   await page.locator('.trail-branch').click();
+  await expect(page.locator('.context-menu')).toBeVisible();
   const item = page.locator('.context-menu .menu-item', { hasText: 'origin/feature/remote-only' });
   await expect(item.locator('.menu-icon svg')).toBeVisible();
   await item.click();

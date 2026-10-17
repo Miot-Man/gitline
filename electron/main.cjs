@@ -203,7 +203,8 @@ function openInEditor(repo, file, line, command) {
   const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(exe);
   const q = (a) => (useShell ? `"${a}"` : a);
   return new Promise((resolve, reject) => {
-    const child = spawn(q(exe), args.map(q), { detached: true, stdio: 'ignore', shell: useShell });
+    // windowsHide: no stray console window for .cmd launchers like VS Code's `code.cmd`.
+    const child = spawn(q(exe), args.map(q), { detached: true, stdio: 'ignore', shell: useShell, windowsHide: true });
     child.on('error', () => reject(new Error(`Couldn't start "${cmd || 'code'}". Set your editor's command in Settings.`)));
     child.on('spawn', () => {
       child.unref();
