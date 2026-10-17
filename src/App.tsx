@@ -140,7 +140,8 @@ function Shell() {
   );
 
   const repoMenu = async (e: React.MouseEvent) => {
-    const pos = { clientX: e.clientX, clientY: e.clientY };
+    // Capture the button now: React clears currentTarget once the handler returns.
+    const pos = { clientX: e.clientX, clientY: e.clientY, anchor: e.currentTarget };
     const recent = (await api.recent.get()).slice(0, 10);
     ui.menu(pos, [
       ...recent.map((p) => ({ label: basename(p), hint: tildify(p), onClick: () => openRepo(p) })),

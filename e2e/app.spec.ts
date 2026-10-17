@@ -119,3 +119,35 @@ test('interactive rebase fixes up a commit', async ({ gl }) => {
   expect(gl.git('log', '--format=%s').split('\n')).toEqual(['Feature', 'Base']);
   expect(gl.read('f.txt')).toBe('2\n');
 });
+
+test('dropdowns close when their button is clicked again', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', 'a\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  await gl.open();
+
+  const branchButton = page.locator('.crumb', { hasText: 'branch' });
+  const menu = page.locator('.context-menu');
+  await branchButton.click();
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText('Create new branch');
+  await branchButton.click();
+  await expect(menu).toHaveCount(0);
+  await branchButton.click();
+  await expect(menu).toBeVisible();
+
+  // Opening a different dropdown swaps menus instead of needing two clicks.
+  await page.locator('.split-caret').click();
+  await expect(menu).toContainText('Fetch All');
+  await expect(menu).not.toContainText('Create new branch');
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+
+  // The repository menu loads recent repos before opening; it toggles the same way.
+  const repoButton = page.locator('.crumb', { hasText: 'repository' });
+  await repoButton.click();
+  await expect(menu).toContainText('Open repository');
+  await repoButton.click();
+  await expect(menu).toHaveCount(0);
+});

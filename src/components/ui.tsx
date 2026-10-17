@@ -23,11 +23,22 @@ interface ConfirmOpts {
 
 type ToastKind = 'error' | 'info' | 'success';
 
+// Where a menu opens. A dropdown passes the button it hangs from as `anchor` (a click event's
+// currentTarget counts too): the menu opens under it, and clicking that button again closes it.
+interface MenuEvent {
+  clientX: number;
+  clientY: number;
+  preventDefault?: () => void;
+  type?: string;
+  currentTarget?: EventTarget | null;
+  anchor?: Element | null;
+}
+
 interface UI {
   toast(msg: string, kind?: ToastKind): void;
   prompt(o: PromptOpts): Promise<string | null>;
   confirm(o: ConfirmOpts): Promise<boolean>;
-  menu(e: { clientX: number; clientY: number; preventDefault?: () => void }, items: MenuItem[]): void;
+  menu(e: MenuEvent, items: MenuItem[]): void;
 }
 
 const Ctx = createContext<UI>(null as unknown as UI);
@@ -46,8 +57,10 @@ interface Toast {
 export function UIProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modal, setModal] = useState<Modal | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; anchor: Element | null } | null>(null);
   const nextId = useRef(1);
+  // The dropdown button whose menu was just closed by pressing on it, so the click that follows doesn't reopen it.
+  const closedBy = useRef<{ anchor: Element; at: number } | null>(null);
 
   const toast = useCallback((msg: string, kind: ToastKind = 'info') => {
     const id = nextId.current++;
@@ -65,7 +78,21 @@ export function UIProvider({ children }: { children: ReactNode }) {
   );
   const openMenu = useCallback<UI['menu']>((e, items) => {
     e.preventDefault?.();
-    setMenu({ x: e.clientX, y: e.clientY, items });
+    const anchor = e.anchor ?? (e.type === 'click' && e.currentTarget instanceof Element ? e.currentTarget : null);
+    const recent = closedBy.current;
+    closedBy.current = null;
+    if (anchor && recent && recent.anchor === anchor && Date.now() - recent.at < 1000) return;
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      setMenu({ x: r.left, y: r.bottom + 2, items, anchor });
+    } else setMenu({ x: e.clientX, y: e.clientY, items, anchor: null });
+  }, []);
+
+  const closeMenu = useCallback((target?: EventTarget | null) => {
+    setMenu((m) => {
+      if (m?.anchor && target instanceof Node && m.anchor.contains(target)) closedBy.current = { anchor: m.anchor, at: Date.now() };
+      return null;
+    });
   }, []);
 
   const [ui] = useState<UI>(() => ({ toast, prompt, confirm, menu: openMenu }));
@@ -73,7 +100,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={ui}>
       {children}
-      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
       {modal && <ModalView modal={modal} onClose={() => setModal(null)} />}
       <div className="toasts">
         {toasts.map((t) => (
@@ -90,7 +117,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
+function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: (target?: EventTarget | null) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
   const closeRef = useRef(onClose);
@@ -107,7 +134,7 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
   }, [x, y]);
 
   useEffect(() => {
-    const close = () => closeRef.current();
+    const close = (e?: Event) => closeRef.current(e?.target);
     const key = (e: KeyboardEvent) => e.key === 'Escape' && close();
     window.addEventListener('mousedown', close);
     window.addEventListener('blur', close);

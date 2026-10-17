@@ -797,7 +797,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
 
   // ---------- co-authors ----------
   const coAuthorMenu = async (e: React.MouseEvent) => {
-    const pos = { clientX: e.clientX, clientY: e.clientY };
+    const pos = { clientX: e.clientX, clientY: e.clientY, anchor: e.currentTarget };
     const [all, me] = await Promise.all([
       git<Author[]>('authors', path).catch(() => [] as Author[]),
       git<string | null>('getConfig', path, 'user.email').catch(() => null),
