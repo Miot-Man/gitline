@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, GitBranch, Archive, ArchiveRestore, ChevronDown, SquareTerminal, FolderOpen, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, GitBranch, Archive, ArchiveRestore, ChevronDown, SquareTerminal, FolderOpen, Loader2, RefreshCw, Undo2, Redo2 } from 'lucide-react';
 
 export type PullMode = 'ff' | 'ff-only' | 'rebase';
 
@@ -15,6 +15,8 @@ interface Props {
   ahead: number;
   behind: number;
   canPop: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
   onRepoMenu: (e: React.MouseEvent) => void;
   onBranchMenu: (e: React.MouseEvent) => void;
   onPull: () => void;
@@ -24,13 +26,15 @@ interface Props {
   onStash: () => void;
   onPop: () => void;
   onFetch: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onTerminal: () => void;
   onReveal: () => void;
 }
 
-function ToolButton({ icon, label, onClick, disabled, badge }: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; badge?: number }) {
+function ToolButton({ icon, label, onClick, disabled, badge, title }: { icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; badge?: number; title?: string }) {
   return (
-    <button className="tool-btn" onClick={onClick} disabled={disabled}>
+    <button className="tool-btn" onClick={onClick} disabled={disabled} title={title}>
       <span className="tool-icon">
         {icon}
         {!!badge && <span className="tool-badge">{badge}</span>}
@@ -59,6 +63,9 @@ export function Toolbar(p: Props) {
         </button>
       </div>
       <div className="toolbar-center">
+        <ToolButton icon={<Undo2 size={18} />} label="Undo" onClick={p.onUndo} disabled={!!p.busy || !p.undoLabel} title={p.undoLabel ? `Undo ${p.undoLabel} (⌘Z)` : 'Nothing to undo'} />
+        <ToolButton icon={<Redo2 size={18} />} label="Redo" onClick={p.onRedo} disabled={!!p.busy || !p.redoLabel} title={p.redoLabel ? `Redo ${p.redoLabel} (⇧⌘Z)` : 'Nothing to redo'} />
+        <span className="tool-sep" />
         <ToolButton icon={<RefreshCw size={18} />} label="Fetch" onClick={p.onFetch} disabled={!!p.busy} />
         <div className="split-btn">
           <ToolButton icon={<ArrowDown size={18} />} label="Pull" onClick={p.onPull} disabled={!!p.busy} badge={p.behind} />

@@ -1,6 +1,7 @@
 // Thin wrapper around the git CLI. Every op takes the repo path as its first argument.
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const SEP = '\x1f';
@@ -14,12 +15,12 @@ const ENV = {
   GIT_OPTIONAL_LOCKS: '0',
 };
 
-function git(cwd, args, { allowFail = false } = {}) {
+function git(cwd, args, { allowFail = false, env } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args],
-      { cwd, env: ENV, maxBuffer: 512 * 1024 * 1024 },
+      { cwd, env: env ? { ...ENV, ...env } : ENV, maxBuffer: 512 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err && !allowFail) {
           reject(new Error((stderr || stdout || err.message).trim()));
@@ -45,8 +46,8 @@ function gitInput(cwd, args, input) {
 }
 
 // Runs an op that may stop on conflicts (merge, rebase, cherry-pick, ...).
-async function conflictAware(cwd, args) {
-  const r = await git(cwd, args, { allowFail: true });
+async function conflictAware(cwd, args, env) {
+  const r = await git(cwd, args, { allowFail: true, env });
   const text = r.stdout + r.stderr;
   if (r.code === 0) return { conflict: false, output: text.trim() };
   if (/CONFLICT|could not apply|after resolving the conflicts/i.test(text)) return { conflict: true, output: text.trim() };
@@ -54,6 +55,7 @@ async function conflictAware(cwd, args) {
 }
 
 const exists = (...p) => fs.existsSync(path.join(...p));
+const shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
 const lines = (s) => s.split('\n').filter(Boolean);
 
 async function hasHead(cwd) {
@@ -114,13 +116,12 @@ const ops = {
     };
   },
 
-  async log(cwd, limit = 5000) {
+  // `filter.solo` limits the graph to those refs (plus HEAD); `filter.hidden` drops refs from --all.
+  async log(cwd, limit = 5000, filter = {}) {
     const fmt = ['%H', '%P', '%an', '%ae', '%at', '%s'].join('%x1f') + '%x1e';
-    const r = await git(
-      cwd,
-      ['log', '--exclude=refs/stash', '--all', '--date-order', '-n', String(limit), `--pretty=format:${fmt}`],
-      { allowFail: true }
-    );
+    const { solo = [], hidden = [] } = filter;
+    const revs = solo.length ? ['--ignore-missing', ...solo, 'HEAD'] : [...hidden.map((h) => `--exclude=${h}`), '--exclude=refs/stash', '--all'];
+    const r = await git(cwd, ['log', ...revs, '--date-order', '-n', String(limit), `--pretty=format:${fmt}`, '--'], { allowFail: true });
     if (r.code !== 0) return [];
     return r.stdout
       .split(REC)
@@ -233,6 +234,73 @@ const ops = {
     };
   },
 
+  // Server-side commit search: 'changes' greps diffs (-G), 'path' matches touched file paths.
+  async searchCommits(cwd, mode, query, limit = 2000) {
+    const base = ['log', '--all', '--exclude=refs/stash', '--format=%H', '-n', String(limit)];
+    let args;
+    if (mode === 'changes') args = [...base, '-i', `-G${query}`];
+    else {
+      const q = query.replace(/[*?[\]\\]/g, '\\$&');
+      args = [...base, '--', `:(glob,icase)**/*${q}*`, `:(glob,icase)**/*${q}*/**`];
+    }
+    const r = await git(cwd, args, { allowFail: true });
+    if (r.code !== 0) throw new Error(r.stderr.trim() || 'Search failed');
+    return lines(r.stdout);
+  },
+
+  // Files changed between two commits.
+  async diffRange(cwd, from, to) {
+    return parseNameStatus((await git(cwd, ['diff', '--name-status', '-z', '-M', from, to])).stdout);
+  },
+
+  // History of one file, following renames. Each entry carries the file's path at that commit.
+  async fileLog(cwd, file, limit = 1000) {
+    const fmt = '%x1e' + ['%H', '%P', '%an', '%ae', '%at', '%s'].join('%x1f');
+    const r = await git(cwd, ['log', '--follow', '-M', '-n', String(limit), `--format=${fmt}`, '--name-status', '-z', '--', file], { allowFail: true });
+    if (r.code !== 0) return [];
+    return r.stdout
+      .split(REC)
+      .filter(Boolean)
+      .map((rec) => {
+        // With -z the header is NUL-terminated and followed by the NUL-separated name-status fields.
+        const end = rec.indexOf('\0');
+        const [sha, p, author, email, t, subject] = rec.slice(0, end < 0 ? undefined : end).split(SEP);
+        const files = end < 0 ? [] : parseNameStatus(rec.slice(end + 1).replace(/^[\n\0]+/, ''));
+        const f = files[0] ?? { status: 'M', path: file };
+        return { sha, parents: p ? p.split(' ') : [], author, email, time: Number(t), subject, file: f };
+      });
+  },
+
+  // Blame of a file at `rev`, or the working copy when rev is omitted.
+  async blame(cwd, file, rev) {
+    const r = await git(cwd, ['blame', '--porcelain', ...(rev ? [rev] : []), '--', file]);
+    const commits = {};
+    const out = [];
+    let cur = null;
+    for (const line of r.stdout.split('\n')) {
+      if (line.startsWith('\t')) {
+        out.push({ sha: cur, text: line.slice(1) });
+        continue;
+      }
+      const m = line.match(/^([0-9a-f]{40}) \d+ \d+/);
+      if (m) {
+        cur = m[1];
+        commits[cur] ??= { author: '', email: '', time: 0, summary: '' };
+        continue;
+      }
+      const sp = line.indexOf(' ');
+      const key = line.slice(0, sp);
+      const val = line.slice(sp + 1);
+      const c = cur && commits[cur];
+      if (!c) continue;
+      if (key === 'author') c.author = val;
+      else if (key === 'author-mail') c.email = val.replace(/^<|>$/g, '');
+      else if (key === 'author-time') c.time = Number(val);
+      else if (key === 'summary') c.summary = val;
+    }
+    return { commits, lines: out };
+  },
+
   async lastCommitMessage(cwd) {
     return (await git(cwd, ['log', '-1', '--format=%B'])).stdout.trimEnd();
   },
@@ -312,6 +380,45 @@ const ops = {
   rebase: (cwd, onto) => conflictAware(cwd, ['rebase', onto]),
   cherryPick: (cwd, sha) => conflictAware(cwd, ['cherry-pick', sha]),
   revert: (cwd, sha, isMerge) => conflictAware(cwd, ['revert', '--no-edit', ...(isMerge ? ['-m', '1'] : []), sha]),
+  // Commits an interactive rebase onto `base` would replay, oldest first.
+  async rebasePlan(cwd, base) {
+    const anc = await git(cwd, ['merge-base', '--is-ancestor', base, 'HEAD'], { allowFail: true });
+    if (anc.code !== 0) throw new Error('That commit is not an ancestor of the current branch.');
+    const r = await git(cwd, ['log', '--reverse', '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%B%x1e', `${base}..HEAD`]);
+    const commits = r.stdout
+      .split(REC)
+      .map((s) => s.replace(/^\n/, ''))
+      .filter(Boolean)
+      .map((s) => {
+        const [sha, p, author, email, t, message] = s.split(SEP);
+        return { sha, parents: p ? p.split(' ') : [], author, email, time: Number(t), message: message.trimEnd() };
+      });
+    if (commits.some((c) => c.parents.length > 1)) throw new Error('Interactive rebase over merge commits is not supported.');
+    return commits;
+  },
+
+  // Runs `git rebase -i` non-interactively. `steps` is newest-last: { sha, action, message? }.
+  // Rewords are done with `exec git commit --amend -F <file>` so no editor is needed.
+  async interactiveRebase(cwd, base, steps) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitline-rebase-'));
+    const todo = [];
+    steps.forEach((s, i) => {
+      if (s.action === 'reword') {
+        const msgFile = path.join(dir, `msg-${i}`);
+        fs.writeFileSync(msgFile, s.message);
+        todo.push(`pick ${s.sha}`, `exec git commit --amend -q --allow-empty -F ${shellQuote(msgFile)}`);
+      } else todo.push(`${s.action} ${s.sha}`);
+    });
+    const todoFile = path.join(dir, 'todo');
+    fs.writeFileSync(todoFile, todo.join('\n') + '\n');
+    try {
+      return await conflictAware(cwd, ['rebase', '-i', '--autostash', base], { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoFile)}` });
+    } finally {
+      // Message files are read by `exec` lines that may run later (after a conflict), so keep those.
+      fs.rmSync(todoFile, { force: true });
+    }
+  },
+
   async reset(cwd, sha, mode) {
     await git(cwd, ['reset', '-q', `--${mode}`, sha]);
   },
@@ -329,6 +436,28 @@ const ops = {
   async resolve(cwd, file, side) {
     await git(cwd, ['checkout', `--${side}`, '--', file]);
     await git(cwd, ['add', '--', file]);
+  },
+
+  // ---- undo / redo primitives ----
+  async headState(cwd) {
+    const [head, branch] = await Promise.all([
+      git(cwd, ['rev-parse', '--verify', '-q', 'HEAD'], { allowFail: true }),
+      git(cwd, ['symbolic-ref', '--short', '-q', 'HEAD'], { allowFail: true }),
+    ]);
+    return { head: head.stdout.trim() || null, branch: branch.stdout.trim() || null };
+  },
+  // Unpeeled, so an annotated tag resolves to its tag object rather than the commit.
+  async refSha(cwd, full) {
+    const r = await git(cwd, ['rev-parse', '--verify', '-q', full], { allowFail: true });
+    return r.stdout.trim() || null;
+  },
+  // Creates a ref that must not already exist.
+  async createRef(cwd, full, sha) {
+    await git(cwd, ['update-ref', full, sha, '']);
+  },
+  // Deletes a ref only if it still points where we expect.
+  async deleteRef(cwd, full, sha) {
+    await git(cwd, ['update-ref', '-d', full, sha]);
   },
 
   // ---- tags ----

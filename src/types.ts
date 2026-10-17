@@ -72,3 +72,35 @@ export type DiffTarget =
   | { kind: 'commit'; sha: string; parent?: string; file: FileChange };
 
 export const WIP = '__WIP__';
+
+export interface FileLogEntry extends Commit {
+  file: FileChange; // the file as it was in this commit (path changes across renames)
+}
+
+export interface BlameCommit {
+  author: string;
+  email: string;
+  time: number;
+  summary: string;
+}
+
+export interface Blame {
+  commits: Record<string, BlameCommit>;
+  lines: { sha: string; text: string }[];
+}
+
+export interface GraphFilter {
+  solo: string[];
+  hidden: string[];
+}
+
+export type RebaseAction = 'pick' | 'reword' | 'squash' | 'fixup' | 'drop';
+
+export interface RebaseCommit {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time: number;
+  message: string;
+}

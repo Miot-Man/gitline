@@ -4,6 +4,7 @@ import { api, basename, cleanError } from './api';
 import { UIProvider, useUI } from './components/ui';
 import { RepoView } from './components/RepoView';
 import { Welcome } from './components/Welcome';
+import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 
 interface Tab {
   id: number;
@@ -11,6 +12,12 @@ interface Tab {
 }
 
 type WelcomeMode = 'home' | 'clone' | 'init';
+
+const NON_TEXT_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'];
+const isTextField = (el: Element | null) =>
+  (el instanceof HTMLInputElement && !NON_TEXT_INPUTS.includes(el.type)) ||
+  el instanceof HTMLTextAreaElement ||
+  (el instanceof HTMLElement && el.isContentEditable);
 
 function loadTabs(): { tabs: Tab[]; active: number } {
   try {
@@ -25,6 +32,8 @@ function Shell() {
   const [{ tabs, active }, setState] = useState(loadTabs);
   const [welcomeMode, setWelcomeMode] = useState<WelcomeMode>('home');
   const [command, setCommand] = useState<{ name: string; n: number } | null>(null);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const stateRef = useRef({ tabs, active });
   stateRef.current = { tabs, active };
 
@@ -79,6 +88,15 @@ function Shell() {
   useEffect(
     () =>
       api.onMenu((cmd) => {
+        if ((cmd === 'undo' || cmd === 'redo') && isTextField(document.activeElement)) {
+          document.execCommand(cmd);
+          return;
+        }
+        if (cmd === 'palette') {
+          api.recent.get().then(setRecent);
+          const { tabs, active } = stateRef.current;
+          if (!tabs.find((t) => t.id === active)?.path) return setPaletteOpen(true);
+        }
         switch (cmd) {
           case 'new-tab':
             return newTab();
@@ -111,6 +129,25 @@ function Shell() {
 
   const activeTab = tabs.find((t) => t.id === active);
 
+  const appCommands: PaletteCommand[] = [
+    ...tabs
+      .filter((t) => t.id !== active)
+      .map((t) => ({
+        id: `tab:${t.id}`,
+        group: 'Tab',
+        label: `Switch to ${t.path ? basename(t.path) : 'New Tab'}`,
+        run: () => setState((s) => ({ ...s, active: t.id })),
+      })),
+    ...recent
+      .filter((p) => p !== activeTab?.path)
+      .map((p) => ({ id: `recent:${p}`, group: 'Open', label: `Open ${basename(p)}`, hint: p.replace(/^\/Users\/[^/]+/, '~'), run: () => openRepo(p) })),
+    { id: 'app:open', group: 'Repo', label: 'Open repository…', hint: '⌘O', run: openDialog },
+    { id: 'app:clone', group: 'Repo', label: 'Clone repository…', hint: '⌘N', run: () => newTab('clone') },
+    { id: 'app:init', group: 'Repo', label: 'Init repository…', hint: '⌘I', run: () => newTab('init') },
+    { id: 'app:new-tab', group: 'Tab', label: 'New tab', hint: '⌘T', run: () => newTab() },
+    { id: 'app:close-tab', group: 'Tab', label: 'Close tab', hint: '⌘W', run: () => closeTab(active) },
+  ];
+
   return (
     <div className={`app platform-${api.platform}`}>
       <div className="tabbar">
@@ -139,10 +176,20 @@ function Shell() {
       </div>
       <div className="app-body">
         {tabs.map((t) =>
-          t.path ? <RepoView key={t.id + t.path} path={t.path} active={t.id === active} command={t.id === active ? command : null} onRepoMenu={repoMenu} /> : null
+          t.path ? (
+            <RepoView
+              key={t.id + t.path}
+              path={t.path}
+              active={t.id === active}
+              command={t.id === active ? command : null}
+              onRepoMenu={repoMenu}
+              appCommands={appCommands}
+            />
+          ) : null
         )}
         {activeTab && !activeTab.path && <Welcome onOpen={openRepo} mode={welcomeMode} setMode={setWelcomeMode} />}
       </div>
+      {paletteOpen && <CommandPalette commands={appCommands} onClose={() => setPaletteOpen(false)} />}
     </div>
   );
 }

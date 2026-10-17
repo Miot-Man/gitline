@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal } from 'lucide-react';
-import type { CommitDetails, FileChange, RepoInfo, Status } from '../types';
+import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal, X, ArrowUpDown } from 'lucide-react';
+import type { Commit, CommitDetails, FileChange, RepoInfo, Status } from '../types';
 import { git } from '../api';
 import { authorColor, formatDate, relativeTime, splitPath } from '../lib/format';
 import { Avatar } from './ui';
@@ -384,6 +384,83 @@ export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSele
         {details.files.length === 0 && (
           <div className="panel-empty">
             <FileQuestion size={16} /> No file changes
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface ComparePanelProps {
+  repo: string;
+  base: Commit; // older side
+  target: Commit; // newer side
+  version: number;
+  activePath: string | null;
+  onOpenDiff: (f: FileChange) => void;
+  onSelectSha: (sha: string) => void;
+  onFileMenu: (e: React.MouseEvent, f: FileChange) => void;
+  onSwap: () => void;
+  onClose: () => void;
+}
+
+export function ComparePanel({ repo, base, target, version, activePath, onOpenDiff, onSelectSha, onFileMenu, onSwap, onClose }: ComparePanelProps) {
+  const [files, setFiles] = useState<FileChange[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setFiles(null);
+    setError(null);
+    git<FileChange[]>('diffRange', repo, base.sha, target.sha)
+      .then((f) => alive && setFiles(f))
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [repo, base.sha, target.sha, version]);
+
+  const end = (label: string, c: Commit) => (
+    <div className="compare-end">
+      <span className="muted">{label}</span>
+      <Avatar name={c.author} color={authorColor(c.email)} size={20} />
+      <a className="link" onClick={() => onSelectSha(c.sha)}>
+        <code>{c.sha.slice(0, 7)}</code>
+      </a>
+      <span className="compare-subject" title={c.subject}>
+        {c.subject}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="commit-panel compare-panel">
+      <div className="panel-header">
+        <span>Comparing 2 commits</span>
+        <span>
+          <button className="icon-btn" title="Swap sides" onClick={onSwap}>
+            <ArrowUpDown size={14} />
+          </button>
+          <button className="icon-btn" title="Stop comparing" onClick={onClose}>
+            <X size={14} />
+          </button>
+        </span>
+      </div>
+      <div className="compare-ends">
+        {end('from', base)}
+        {end('to', target)}
+      </div>
+      <div className="file-summary">
+        {files ? `${files.length} file${files.length === 1 ? '' : 's'} changed` : error ? '' : 'Loading…'}
+      </div>
+      <div className="file-list grow">
+        {error && <div className="panel-empty">{error}</div>}
+        {files?.map((f) => (
+          <FileRow key={f.path} file={f} active={activePath === f.path} onClick={() => onOpenDiff(f)} onContextMenu={(e) => onFileMenu(e, f)} />
+        ))}
+        {files && files.length === 0 && (
+          <div className="panel-empty">
+            <FileQuestion size={16} /> No differences
           </div>
         )}
       </div>

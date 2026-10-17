@@ -47,7 +47,19 @@ interface Props {
   wip: WipCounts;
   findOpen: boolean;
   setFindOpen: (v: boolean) => void;
+  compareSha: string | null;
+  onCompare: (sha: string) => void;
+  onSearch: (mode: Exclude<SearchMode, 'message'>, query: string) => Promise<string[]>;
+  filterNote: React.ReactNode;
 }
+
+export type SearchMode = 'message' | 'changes' | 'path';
+
+const SEARCH_MODES: { mode: SearchMode; label: string; placeholder: string }[] = [
+  { mode: 'message', label: 'Message', placeholder: 'Search message, sha, author' },
+  { mode: 'changes', label: 'Changes', placeholder: 'Search added/removed code (regex)' },
+  { mode: 'path', label: 'File', placeholder: 'Search changed file names' },
+];
 
 function buildPills(refs: Ref[], isHeadCommit: boolean, detached: boolean): Pill[] {
   const pills: Pill[] = [];
@@ -136,12 +148,15 @@ const RowGraph = memo(function RowGraph({
 });
 
 export function CommitGraph(props: Props) {
-  const { items, maxLanes, refsBySha, headSha, detached, selected, onSelect, scrollTarget, wip, findOpen, setFindOpen } = props;
+  const { items, maxLanes, refsBySha, headSha, detached, selected, onSelect, scrollTarget, wip, findOpen, setFindOpen, compareSha } = props;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewH, setViewH] = useState(800);
   const [refW, setRefW] = useState(200);
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<SearchMode>('message');
+  const [serverHits, setServerHits] = useState<{ key: string; shas: Set<string> } | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const findRef = useRef<HTMLInputElement>(null);
 
   const graphW = Math.min(Math.max(maxLanes * LANE_W + PAD * 2, 60), 420);
@@ -182,17 +197,36 @@ export function CommitGraph(props: Props) {
   }, [findOpen]);
 
   const q = query.trim().toLowerCase();
+  const serverKey = `${mode}\0${query.trim()}`;
+
+  // Diff and path searches run in git, debounced.
+  const { onSearch } = props;
+  useEffect(() => {
+    setSearchError(null);
+    if (mode === 'message' || !q) return setServerHits(null);
+    const t = setTimeout(() => {
+      onSearch(mode, query.trim())
+        .then((shas) => setServerHits({ key: serverKey, shas: new Set(shas) }))
+        .catch((e) => setSearchError(e.message));
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverKey]);
+
+  const searching = mode !== 'message' && !!q && serverHits?.key !== serverKey && !searchError;
   const matches = useMemo(() => {
     if (!q) return [] as number[];
     const out: number[] = [];
     items.forEach((it, i) => {
       const c = it.commit;
       if (c.sha === WIP) return;
-      if (c.subject.toLowerCase().includes(q) || c.sha.startsWith(q) || c.author.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
+      if (mode !== 'message') {
+        if (serverHits?.key === serverKey && serverHits.shas.has(c.sha)) out.push(i);
+      } else if (c.subject.toLowerCase().includes(q) || c.sha.startsWith(q) || c.author.toLowerCase().includes(q) || c.email.toLowerCase().includes(q))
         out.push(i);
     });
     return out;
-  }, [items, q]);
+  }, [items, q, mode, serverHits, serverKey]);
   const matchSet = useMemo(() => new Set(matches), [matches]);
 
   const jump = (dir: 1 | -1) => {
@@ -239,13 +273,19 @@ export function CommitGraph(props: Props) {
     const color = laneColor(it.graph.afterColors[it.graph.col] ?? it.graph.beforeColors[it.graph.col] ?? it.graph.col);
     const pills = isWip ? [] : buildPills(refsBySha.get(c.sha) ?? [], c.sha === headSha, detached);
     const isSel = selected === c.sha;
-    const dim = q && !isWip && !matchSet.has(i);
+    // Both ends of a comparison get the compare marker.
+    const isCmp = !!compareSha && (compareSha === c.sha || isSel);
+    const dim = q && !searching && !isWip && !matchSet.has(i);
     rows.push(
       <div
         key={c.sha}
-        className={`graph-row${isSel ? ' selected' : ''}${dim ? ' dim' : ''}${matchSet.has(i) ? ' match' : ''}`}
+        className={`graph-row${isSel ? ' selected' : ''}${isCmp ? ' compare' : ''}${dim ? ' dim' : ''}${matchSet.has(i) ? ' match' : ''}`}
         style={{ top: i * ROW_H, ['--lane' as string]: color }}
-        onMouseDown={() => onSelect(c.sha)}
+        onMouseDown={(e) => {
+          if (e.button !== 0 && (isSel || isCmp)) return; // keep a comparison when right-clicking either side
+          if ((e.metaKey || e.ctrlKey) && e.button === 0 && !isWip) props.onCompare(c.sha);
+          else onSelect(c.sha);
+        }}
         onContextMenu={(e) => props.onRowMenu(e, c)}
       >
         <div className="col-refs" style={{ width: refW }}>
@@ -317,10 +357,24 @@ export function CommitGraph(props: Props) {
         {findOpen && (
           <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
             <Search size={13} />
+            <div className="seg find-modes">
+              {SEARCH_MODES.map((m) => (
+                <button
+                  key={m.mode}
+                  className={mode === m.mode ? 'on' : ''}
+                  onClick={() => {
+                    setMode(m.mode);
+                    findRef.current?.focus();
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
             <input
               ref={findRef}
               value={query}
-              placeholder="Search commits (message, sha, author)"
+              placeholder={SEARCH_MODES.find((m) => m.mode === mode)!.placeholder}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') jump(e.shiftKey ? -1 : 1);
@@ -330,7 +384,9 @@ export function CommitGraph(props: Props) {
                 }
               }}
             />
-            <span className="find-count">{q ? `${matches.length}` : ''}</span>
+            <span className={`find-count${searchError ? ' error' : ''}`} title={searchError ?? undefined}>
+              {searchError ? 'error' : searching ? '…' : q ? `${matches.length}` : ''}
+            </span>
             <button className="icon-btn" onClick={() => jump(-1)}>
               <ChevronUp size={14} />
             </button>
@@ -349,6 +405,7 @@ export function CommitGraph(props: Props) {
           </div>
         )}
       </div>
+      {props.filterNote && <div className="graph-filter-note">{props.filterNote}</div>}
       <div className="graph-scroll" ref={scrollRef} tabIndex={0} onKeyDown={onKeyDown} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
         <div style={{ height: items.length * ROW_H, position: 'relative' }}>{rows}</div>
         {items.length === 0 && <div className="empty-graph">No commits yet. Stage some files and make your first commit.</div>}

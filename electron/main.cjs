@@ -129,7 +129,22 @@ function buildMenu() {
         ...(isMac ? [] : [{ role: 'quit' }]),
       ],
     },
-    { role: 'editMenu' },
+    {
+      // Undo/Redo go to the renderer, which applies them to text fields when one is focused
+      // and to the repository otherwise.
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => send('menu', 'undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: () => send('menu', 'redo') },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Command Palette…', accelerator: 'CmdOrCtrl+P', click: () => send('menu', 'palette') },
+      ],
+    },
     {
       label: 'View',
       submenu: [

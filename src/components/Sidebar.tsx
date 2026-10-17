@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Laptop, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown } from 'lucide-react';
-import type { Ref, Stash } from '../types';
+import { ChevronDown, ChevronRight, Laptop, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair } from 'lucide-react';
+import type { GraphFilter, Ref, Stash } from '../types';
 import { parseTrack } from '../lib/format';
 
 interface Props {
   refs: Ref[];
   stashes: Stash[];
   remotes: string[];
+  filter: GraphFilter;
   onSelectSha: (sha: string) => void;
   onRefMenu: (e: React.MouseEvent, r: Ref) => void;
   onRefDoubleClick: (r: Ref) => void;
@@ -189,12 +190,14 @@ export function Sidebar(props: Props) {
   );
 }
 
-function RefRow({ r, depth, icon, onSelectSha, onRefMenu, onRefDoubleClick }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
+function RefRow({ r, depth, icon, filter, onSelectSha, onRefMenu, onRefDoubleClick }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
   const t = parseTrack(r.track);
   const label = r.name.split('/').pop();
+  const isSolo = filter.solo.includes(r.full);
+  const isHidden = filter.hidden.includes(r.full) || (filter.solo.length > 0 && !isSolo && !r.isHead);
   return (
     <div
-      className={`side-item${r.isHead ? ' head' : ''}`}
+      className={`side-item${r.isHead ? ' head' : ''}${isHidden ? ' ref-hidden' : ''}`}
       style={{ paddingLeft: 24 + depth * 14 }}
       onClick={() => onSelectSha(r.sha)}
       onDoubleClick={() => onRefDoubleClick(r)}
@@ -203,6 +206,8 @@ function RefRow({ r, depth, icon, onSelectSha, onRefMenu, onRefDoubleClick }: { 
     >
       {r.isHead ? <Check size={13} className="side-icon head-icon" /> : icon === 'local' ? <Laptop size={13} className="side-icon" /> : <Cloud size={13} className="side-icon" />}
       <span className="side-label">{label}</span>
+      {isSolo && <Crosshair size={12} className="ref-flag solo" />}
+      {filter.hidden.includes(r.full) && <EyeOff size={12} className="ref-flag" />}
       {(t.ahead > 0 || t.behind > 0) && (
         <span className="track">
           {t.behind > 0 && (
