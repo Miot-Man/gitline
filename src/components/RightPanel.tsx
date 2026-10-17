@@ -1,0 +1,392 @@
+import { useEffect, useState } from 'react';
+import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal } from 'lucide-react';
+import type { CommitDetails, FileChange, RepoInfo, Status } from '../types';
+import { git } from '../api';
+import { authorColor, formatDate, relativeTime, splitPath } from '../lib/format';
+import { Avatar } from './ui';
+
+export function StatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case 'A':
+    case '?':
+      return <Plus size={13} className="st st-add" />;
+    case 'D':
+      return <Minus size={13} className="st st-del" />;
+    case 'R':
+    case 'C':
+      return <ArrowRight size={13} className="st st-ren" />;
+    case 'U':
+      return <AlertTriangle size={13} className="st st-conf" />;
+    default:
+      return <Pencil size={13} className="st st-mod" />;
+  }
+}
+
+function FileRow({
+  file,
+  active,
+  onClick,
+  onContextMenu,
+  action,
+}: {
+  file: FileChange;
+  active: boolean;
+  onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  action?: React.ReactNode;
+}) {
+  const { dir, name } = splitPath(file.path);
+  return (
+    <div className={`file-row${active ? ' active' : ''}`} onClick={onClick} onContextMenu={onContextMenu} title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+      <StatusIcon status={file.status} />
+      <span className="file-path">
+        <span className="file-dir">{dir}</span>
+        <span className="file-name">{name}</span>
+      </span>
+      {action && (
+        <span className="file-action" onClick={(e) => e.stopPropagation()}>
+          {action}
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface StagingProps {
+  repo: string;
+  status: Status;
+  info: RepoInfo;
+  summary: string;
+  setSummary: (s: string) => void;
+  description: string;
+  setDescription: (s: string) => void;
+  amend: boolean;
+  setAmend: (b: boolean) => void;
+  activePath: string | null;
+  onOpenDiff: (f: FileChange, staged: boolean) => void;
+  onStage: (files: FileChange[]) => void;
+  onUnstage: (files: FileChange[]) => void;
+  onStageAll: () => void;
+  onUnstageAll: () => void;
+  onDiscardAll: () => void;
+  onFileMenu: (e: React.MouseEvent, f: FileChange, staged: boolean) => void;
+  onCommit: () => void;
+  onResolve: (f: FileChange, side: 'ours' | 'theirs') => void;
+  onMarkResolved: (f: FileChange) => void;
+  onAbort: () => void;
+  onContinue: () => void;
+  onSkip: () => void;
+}
+
+const STATE_LABEL: Record<string, string> = {
+  merge: 'Merge in progress',
+  rebase: 'Rebase in progress',
+  'cherry-pick': 'Cherry-pick in progress',
+  revert: 'Revert in progress',
+};
+
+export function StagingPanel(p: StagingProps) {
+  const { status, info } = p;
+  const total = new Set([...status.staged, ...status.unstaged, ...status.conflicted].map((f) => f.path)).size;
+  const canCommit = (status.staged.length > 0 || p.amend || (info.state === 'merge' && status.conflicted.length === 0)) && p.summary.trim().length > 0;
+  const commitLabel =
+    status.staged.length === 0 && !p.amend
+      ? info.state === 'merge'
+        ? 'Commit merge'
+        : 'Stage changes to commit'
+      : p.amend
+        ? 'Amend previous commit'
+        : `Commit changes to ${status.staged.length} file${status.staged.length === 1 ? '' : 's'}`;
+
+  return (
+    <div className="staging">
+      <div className="panel-header">
+        <span>
+          {total} file change{total === 1 ? '' : 's'} on <b>{info.branch ?? 'detached HEAD'}</b>
+        </span>
+        {total > 0 && (
+          <button className="icon-btn" title="Discard all changes" onClick={p.onDiscardAll}>
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+
+      {info.state && (
+        <div className="state-banner">
+          <div className="state-title">
+            <AlertTriangle size={14} /> {STATE_LABEL[info.state]}
+          </div>
+          <div className="state-text">
+            {status.conflicted.length
+              ? `Resolve ${status.conflicted.length} conflicted file${status.conflicted.length === 1 ? '' : 's'}, then continue.`
+              : 'All conflicts resolved.'}
+          </div>
+          <div className="state-actions">
+            <button className="btn btn-sm btn-danger" onClick={p.onAbort}>
+              Abort
+            </button>
+            {info.state === 'rebase' && (
+              <button className="btn btn-sm" onClick={p.onSkip}>
+                Skip
+              </button>
+            )}
+            {info.state !== 'merge' && (
+              <button className="btn btn-sm btn-primary" disabled={status.conflicted.length > 0} onClick={p.onContinue}>
+                Continue
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="file-sections">
+        {status.conflicted.length > 0 && (
+          <div className="file-section">
+            <div className="file-section-header conflict">
+              <span>Conflicted Files ({status.conflicted.length})</span>
+            </div>
+            <div className="file-list">
+              {status.conflicted.map((f) => (
+                <FileRow
+                  key={f.path}
+                  file={f}
+                  active={p.activePath === f.path}
+                  onClick={() => p.onOpenDiff(f, false)}
+                  onContextMenu={(e) => p.onFileMenu(e, f, false)}
+                  action={
+                    <>
+                      <button className="btn btn-xs" title="Take our version" onClick={() => p.onResolve(f, 'ours')}>
+                        Ours
+                      </button>
+                      <button className="btn btn-xs" title="Take their version" onClick={() => p.onResolve(f, 'theirs')}>
+                        Theirs
+                      </button>
+                      <button className="btn btn-xs btn-primary" title="Mark as resolved (stage file)" onClick={() => p.onMarkResolved(f)}>
+                        Resolved
+                      </button>
+                    </>
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="file-section">
+          <div className="file-section-header">
+            <span>Unstaged Files ({status.unstaged.length})</span>
+            {status.unstaged.length > 0 && (
+              <button className="btn btn-xs btn-stage" onClick={p.onStageAll}>
+                Stage all changes
+              </button>
+            )}
+          </div>
+          <div className="file-list">
+            {status.unstaged.map((f) => (
+              <FileRow
+                key={f.path}
+                file={f}
+                active={p.activePath === f.path}
+                onClick={() => p.onOpenDiff(f, false)}
+                onContextMenu={(e) => p.onFileMenu(e, f, false)}
+                action={
+                  <button className="btn btn-xs btn-stage" onClick={() => p.onStage([f])}>
+                    Stage File
+                  </button>
+                }
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="file-section">
+          <div className="file-section-header">
+            <span>Staged Files ({status.staged.length})</span>
+            {status.staged.length > 0 && (
+              <button className="btn btn-xs btn-unstage" onClick={p.onUnstageAll}>
+                Unstage all changes
+              </button>
+            )}
+          </div>
+          <div className="file-list">
+            {status.staged.map((f) => (
+              <FileRow
+                key={f.path}
+                file={f}
+                active={p.activePath === f.path}
+                onClick={() => p.onOpenDiff(f, true)}
+                onContextMenu={(e) => p.onFileMenu(e, f, true)}
+                action={
+                  <button className="btn btn-xs btn-unstage" onClick={() => p.onUnstage([f])}>
+                    Unstage File
+                  </button>
+                }
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="commit-box">
+        <div className="commit-box-header">
+          <span>
+            <GitCommitHorizontal size={14} /> Commit
+          </span>
+          <label className="checkbox">
+            <input type="checkbox" checked={p.amend} onChange={(e) => p.setAmend(e.target.checked)} disabled={!info.head} />
+            Amend
+          </label>
+        </div>
+        <div className="summary-wrap">
+          <input
+            className="summary"
+            placeholder="Summary"
+            value={p.summary}
+            onChange={(e) => p.setSummary(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) p.onCommit();
+            }}
+          />
+          <span className={`summary-count${p.summary.length > 72 ? ' over' : ''}`}>{72 - p.summary.length}</span>
+        </div>
+        <textarea
+          className="description"
+          placeholder="Description"
+          value={p.description}
+          onChange={(e) => p.setDescription(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) p.onCommit();
+          }}
+        />
+        <button className="btn btn-commit" disabled={!canCommit} onClick={p.onCommit} title="⌘/Ctrl + Enter">
+          {commitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface CommitPanelProps {
+  repo: string;
+  sha: string;
+  version: number;
+  activePath: string | null;
+  onOpenDiff: (d: CommitDetails, f: FileChange) => void;
+  onSelectSha: (sha: string) => void;
+  onFileMenu: (e: React.MouseEvent, f: FileChange) => void;
+  toast: (m: string, k?: 'error' | 'info' | 'success') => void;
+}
+
+export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSelectSha, onFileMenu, toast }: CommitPanelProps) {
+  const [details, setDetails] = useState<CommitDetails | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    git<CommitDetails>('commitDetails', repo, sha)
+      .then((d) => alive && setDetails(d))
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [repo, sha, version]);
+
+  if (error) return <div className="panel-empty">{error}</div>;
+  if (!details || details.sha !== sha) return <div className="panel-empty">Loading…</div>;
+
+  const [subject, ...bodyLines] = details.message.split('\n');
+  const body = bodyLines.join('\n').trim();
+  const counts = { M: 0, A: 0, D: 0, R: 0 };
+  details.files.forEach((f) => {
+    const k = (f.status === 'C' ? 'A' : f.status) as keyof typeof counts;
+    if (k in counts) counts[k]++;
+    else counts.M++;
+  });
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast('Copied to clipboard', 'success');
+  };
+
+  return (
+    <div className="commit-panel">
+      <div className="panel-header">
+        <span className="sha-line">
+          commit: <code>{details.sha.slice(0, 7)}</code>
+          <button className="icon-btn" title="Copy SHA" onClick={() => copy(details.sha)}>
+            <CopyIcon size={12} />
+          </button>
+        </span>
+        <span className="parents">
+          {details.parents.map((p) => (
+            <span key={p}>
+              parent:{' '}
+              <a className="link" onClick={() => onSelectSha(p)}>
+                {p.slice(0, 7)}
+              </a>
+            </span>
+          ))}
+        </span>
+      </div>
+      <div className="commit-message">
+        <div className="commit-subject">{subject}</div>
+        {body && <pre className="commit-body">{body}</pre>}
+      </div>
+      <div className="commit-author">
+        <Avatar name={details.author} color={authorColor(details.email)} size={30} />
+        <div>
+          <div className="author-name">
+            {details.author} <span className="muted">&lt;{details.email}&gt;</span>
+          </div>
+          <div className="muted" title={formatDate(details.time)}>
+            authored {formatDate(details.time)} ({relativeTime(details.time)})
+          </div>
+          {(details.committer !== details.author || details.commitTime !== details.time) && (
+            <div className="muted">
+              committed by {details.committer} · {formatDate(details.commitTime)}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="file-summary">
+        {counts.M > 0 && (
+          <span className="st-mod">
+            <Pencil size={12} /> {counts.M} modified
+          </span>
+        )}
+        {counts.A > 0 && (
+          <span className="st-add">
+            <Plus size={12} /> {counts.A} added
+          </span>
+        )}
+        {counts.D > 0 && (
+          <span className="st-del">
+            <Minus size={12} /> {counts.D} deleted
+          </span>
+        )}
+        {counts.R > 0 && (
+          <span className="st-ren">
+            <ArrowRight size={12} /> {counts.R} renamed
+          </span>
+        )}
+        {details.parents.length > 1 && <span className="muted">(changes vs. first parent)</span>}
+      </div>
+      <div className="file-list grow">
+        {details.files.map((f) => (
+          <FileRow
+            key={f.path}
+            file={f}
+            active={activePath === f.path}
+            onClick={() => onOpenDiff(details, f)}
+            onContextMenu={(e) => onFileMenu(e, f)}
+          />
+        ))}
+        {details.files.length === 0 && (
+          <div className="panel-empty">
+            <FileQuestion size={16} /> No file changes
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
