@@ -45,3 +45,14 @@ export function parseTrack(track?: string) {
   const b = track.match(/behind (\d+)/);
   return { ahead: a ? Number(a[1]) : 0, behind: b ? Number(b[1]) : 0, gone: false };
 }
+
+// "Today", "Yesterday", a weekday within the last week, else a short date (with the year if it isn't this year).
+export function dayLabel(unix: number, now = new Date()) {
+  const d = new Date(unix * 1000);
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+}

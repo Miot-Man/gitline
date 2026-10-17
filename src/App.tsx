@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Plus, X, FolderGit2, Home } from 'lucide-react';
 import { api, basename, cleanError } from './api';
 import { UIProvider, useUI } from './components/ui';
 import { RepoView } from './components/RepoView';
 import { Welcome } from './components/Welcome';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { SettingsDialog } from './components/SettingsDialog';
+import { Rail } from './components/Rail';
+import { StatusBar } from './components/StatusBar';
+import type { RepoStats } from './types';
 import { shortcut, useSettings } from './lib/settings';
 
 interface Tab {
@@ -56,6 +58,8 @@ function Shell() {
   const [recent, setRecent] = useState<string[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [stats, setStats] = useState<RepoStats | null>(null);
+  const settings = useSettings();
   const stateRef = useRef({ tabs, active });
   stateRef.current = { tabs, active };
 
@@ -154,6 +158,26 @@ function Shell() {
 
   const activeTab = tabs.find((t) => t.id === active);
 
+  const sendCommand = (name: string) => setCommand({ name, n: Date.now() });
+  const openPalette = () => {
+    api.recent.get().then(setRecent);
+    if (activeTab?.path) sendCommand('palette');
+    else setPaletteOpen(true);
+  };
+  const tabMenu = (e: React.MouseEvent, id: number) => {
+    const t = tabs.find((x) => x.id === id);
+    ui.menu(e, [
+      ...(t?.path
+        ? [
+            { label: 'Show in folder', onClick: () => api.openPath(t.path!) },
+            { label: 'Copy path', onClick: () => navigator.clipboard.writeText(t.path!) },
+            'sep' as const,
+          ]
+        : []),
+      { label: 'Close tab', hint: shortcut('W'), onClick: () => closeTab(id) },
+    ]);
+  };
+
   const appCommands: PaletteCommand[] = [
     ...tabs
       .filter((t) => t.id !== active)
@@ -176,30 +200,23 @@ function Shell() {
 
   return (
     <div className={`app platform-${api.platform}`}>
-      <div className="tabbar">
-        {tabs.map((t) => (
-          <div
-            key={t.id}
-            className={`tab${t.id === active ? ' active' : ''}`}
-            onMouseDown={() => setState((s) => ({ ...s, active: t.id }))}
-            onAuxClick={(e) => e.button === 1 && closeTab(t.id)}
-            title={t.path ?? 'New tab'}
-          >
-            {t.path ? <FolderGit2 size={13} /> : <Home size={13} />}
-            <span className="tab-name">{t.path ? basename(t.path) : 'New Tab'}</span>
-            <button
-              className="tab-close"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => closeTab(t.id)}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ))}
-        <button className="tab-new" onClick={() => newTab()} title={`New tab (${shortcut('T')})`}>
-          <Plus size={14} />
-        </button>
-      </div>
+      {api.platform === 'darwin' && <div className="titlebar">{activeTab?.path ? `${basename(activeTab.path)} — Gitline` : 'Gitline'}</div>}
+      <div className="app-main">
+        <Rail
+          tabs={tabs}
+          active={active}
+          stats={activeTab?.path ? stats : null}
+          onSelect={(id) => setState((st) => ({ ...st, active: id }))}
+          onTabMenu={tabMenu}
+          onClose={closeTab}
+          onNew={() => newTab()}
+          onView={sendCommand}
+          onSearch={openPalette}
+          onSettings={() => setSettingsOpen(true)}
+          onEditor={() => activeTab?.path && api.openInEditor(activeTab.path, undefined, undefined, settings.editor).catch((e) => ui.toast(cleanError(e), 'error'))}
+          onTerminal={() => activeTab?.path && api.openTerminal(activeTab.path)}
+          onReveal={() => activeTab?.path && api.openPath(activeTab.path)}
+        />
       <div className="app-body">
         {tabs.map((t) =>
           t.path ? (
@@ -211,11 +228,19 @@ function Shell() {
               onRepoMenu={repoMenu}
               appCommands={appCommands}
               onOpenRepo={openRepo}
+              onStats={setStats}
             />
           ) : null
         )}
         {activeTab && !activeTab.path && <Welcome onOpen={openRepo} mode={welcomeMode} setMode={setWelcomeMode} />}
+        </div>
       </div>
+      <StatusBar
+        stats={activeTab?.path ? stats : null}
+        onChanges={() => sendCommand('view-changes')}
+        onUndo={() => sendCommand('undo')}
+        onPalette={openPalette}
+      />
       {paletteOpen && <CommandPalette commands={appCommands} onClose={() => setPaletteOpen(false)} />}
       {settingsOpen && <SettingsDialog repo={activeTab?.path ?? null} onClose={() => setSettingsOpen(false)} />}
     </div>

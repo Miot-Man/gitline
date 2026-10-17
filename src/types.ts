@@ -47,6 +47,20 @@ export interface RepoInfo {
   state: RepoState;
   mergeMsg: string | null;
   remotes: string[];
+  fetchedAt: number | null; // ms since epoch of the last fetch/pull, if any
+}
+
+// What the active repo reports to the app shell for the rail badges and status bar.
+export interface RepoStats {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  changes: number;
+  prs: number;
+  fetchedAt: number | null;
+  undoLabel: string | null;
+  busy: string | null;
+  view: 'history' | 'changes';
 }
 
 export interface CommitDetails {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Columns2, Rows3 } from 'lucide-react';
+import { Columns2, Rows3 } from 'lucide-react';
 import type { DiffTarget } from '../types';
 import { git } from '../api';
 import { buildLinePatch, parseDiff, type DiffLine, type Hunk } from '../lib/diff';
@@ -15,11 +15,13 @@ interface Props {
   onUnstageFile: () => void;
   onDiscardFile: () => void;
   onApplyHunk: (patch: string, cached: boolean, reverse: boolean) => void;
+  onHistory?: () => void;
+  onBlame?: () => void;
 }
 
 const MAX_LINES = 20000;
 
-export function DiffView({ repo, target, version, onClose, onStageFile, onUnstageFile, onDiscardFile, onApplyHunk }: Props) {
+export function DiffView({ repo, target, version, onClose, onStageFile, onUnstageFile, onDiscardFile, onApplyHunk, onHistory, onBlame }: Props) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [split, setSplit] = useState(() => localStorage.getItem('diffSplit') === '1');
@@ -55,6 +57,8 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
   const untracked = file.status === '?';
   const hunkActions = isWip && !untracked && file.status !== 'U' && parsed && !parsed.combined && !parsed.binary;
   const totalLines = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.length, 0) : 0;
+  const added = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.filter((l) => l.type === 'add').length, 0) : 0;
+  const removed = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.filter((l) => l.type === 'del').length, 0) : 0;
 
   // Binary images get a before / after view instead of "no text diff".
   const image = parsed?.binary && IMAGE_EXT.test(file.path) ? imageSides(target) : null;
@@ -93,10 +97,13 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
     <div className="diff-view">
       <div className="diff-header">
         <StatusIcon status={file.status} />
-        <span className="diff-path">
-          {file.oldPath && file.oldPath !== file.path ? `${file.oldPath} → ` : ''}
-          {file.path}
-        </span>
+        {file.oldPath && file.oldPath !== file.path && <span className="diff-renamed">renamed from {file.oldPath}</span>}
+        {parsed && !parsed.binary && (
+          <span className="diff-counts">
+            <span className="add">+{added}</span>
+            <span className="del">−{removed}</span>
+          </span>
+        )}
         {isWip && <span className={`diff-badge ${staged ? 'staged' : 'unstaged'}`}>{staged ? 'Staged' : 'Unstaged'}</span>}
         <span className="spacer" />
         <div className="seg">
@@ -107,6 +114,16 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
             <Columns2 size={14} />
           </button>
         </div>
+        {onHistory && (
+          <button className="btn btn-sm" onClick={onHistory}>
+            History
+          </button>
+        )}
+        {onBlame && (
+          <button className="btn btn-sm" onClick={onBlame}>
+            Blame
+          </button>
+        )}
         {isWip && !staged && file.status !== 'U' && (
           <button className="btn btn-sm btn-danger-ghost" onClick={onDiscardFile}>
             Discard File
@@ -122,9 +139,6 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
             Unstage File
           </button>
         )}
-        <button className="icon-btn" onClick={onClose} title="Close (Esc)">
-          <X size={16} />
-        </button>
       </div>
       <div className="diff-body">
         {error && <div className="diff-message">{error}</div>}

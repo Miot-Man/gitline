@@ -9,19 +9,20 @@ test('commit from the staging panel, then undo and redo it', async ({ gl }) => {
   gl.write('notes.txt', 'one\ntwo\n');
 
   // A commit is selected when the repo opens; switch to the working changes.
-  await row(page, '// WIP').click();
+  await row(page, 'uncommitted change').click();
   await page.getByRole('button', { name: 'Stage all changes' }).click();
   await page.locator('.summary').fill('Add line two');
   await page.locator('.btn-commit').click();
   await expect(row(page, 'Add line two')).toBeVisible();
   expect(gl.git('log', '-1', '--format=%s')).toBe('Add line two');
 
-  await page.locator('.tool-btn', { hasText: 'Undo' }).click();
+  // At the smallest window the header hides Undo/Redo; the status bar and the Edit menu still have them.
+  await page.locator('.statusbar').getByRole('button', { name: /^Undo: Commit "Add line two"/ }).click();
   await expect(row(page, 'Add line two')).toHaveCount(0);
   expect(gl.git('log', '-1', '--format=%s')).toBe('Initial');
   expect(gl.git('diff', '--cached', '--name-only')).toBe('notes.txt');
 
-  await page.locator('.tool-btn', { hasText: 'Redo' }).click();
+  await gl.menu('redo');
   await expect(row(page, 'Add line two')).toBeVisible();
 });
 
@@ -37,7 +38,7 @@ test('command palette creates a branch', async ({ gl }) => {
   await page.keyboard.press('Enter');
   await page.locator('.modal input').fill('feature/login');
   await page.keyboard.press('Enter');
-  await expect(page.locator('.crumb-value', { hasText: 'feature/login' })).toBeVisible();
+  await expect(page.locator('.trail-branch', { hasText: 'feature/login' })).toBeVisible();
   expect(gl.git('symbolic-ref', '--short', 'HEAD')).toBe('feature/login');
 });
 
@@ -64,7 +65,7 @@ test('stage a single line from the diff view', async ({ gl }) => {
   await gl.open();
   gl.write('lines.txt', 'a\nB\nc\nd\nE\n');
 
-  await row(page, '// WIP').click();
+  await row(page, 'uncommitted change').click();
   await page.locator('.staging .file-row', { hasText: 'lines.txt' }).click();
   const line = (text: string, cls: string) => page.locator(`tr.${cls}`, { has: page.locator('td.code', { hasText: new RegExp(`^.${text}$`) }) }).locator('td.ln').first();
   await line('b', 'dl-del').click();
@@ -91,7 +92,8 @@ test('resolve a merge conflict in the conflict editor', async ({ gl }) => {
   }
   await gl.open();
 
-  await page.locator('.file-row', { hasText: 'config.txt' }).click();
+  // Click the name: the conflicted row also has its own Ours/Theirs buttons.
+  await page.locator('.file-row', { hasText: 'config.txt' }).locator('.file-name').click();
   await page.locator('.conflict-card .seg button', { hasText: /^Theirs$/ }).click();
   await page.getByRole('button', { name: 'Save & Mark Resolved' }).click();
   await expect(page.locator('.btn-commit')).toHaveText('Commit merge');
@@ -127,7 +129,7 @@ test('dropdowns close when their button is clicked again', async ({ gl }) => {
   gl.git('commit', '-qm', 'Initial');
   await gl.open();
 
-  const branchButton = page.locator('.crumb', { hasText: 'branch' });
+  const branchButton = page.locator('.trail-branch');
   const menu = page.locator('.context-menu');
   await branchButton.click();
   await expect(menu).toBeVisible();
@@ -145,9 +147,29 @@ test('dropdowns close when their button is clicked again', async ({ gl }) => {
   await expect(menu).toHaveCount(0);
 
   // The repository menu loads recent repos before opening; it toggles the same way.
-  const repoButton = page.locator('.crumb', { hasText: 'repository' });
+  const repoButton = page.locator('.side-title-btn');
   await repoButton.click();
   await expect(menu).toContainText('Open repository');
   await repoButton.click();
   await expect(menu).toHaveCount(0);
+});
+
+test('opening a file diff shows a trail, arrow keys step files, back returns', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', 'a\n');
+  gl.write('b.txt', 'b\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Two files');
+  await gl.open();
+
+  await row(page, 'Two files').click();
+  await page.locator('.commit-panel .file-row', { hasText: 'a.txt' }).click();
+  const trail = page.locator('.trail');
+  await expect(trail).toContainText('a.txt');
+  await page.keyboard.press('ArrowDown');
+  await expect(trail).toContainText('b.txt');
+  await expect(page.locator('.commit-panel .file-row.active')).toContainText('b.txt');
+  await page.getByRole('button', { name: 'Back to history' }).click();
+  await expect(row(page, 'Two files')).toBeVisible();
+  await expect(page.locator('.trail-branch')).toBeVisible();
 });

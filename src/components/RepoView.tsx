@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Author,
@@ -13,6 +14,7 @@ import type {
   RebaseCommit,
   Ref,
   RepoInfo,
+  RepoStats,
   Stash,
   Status,
   Submodule,
@@ -23,7 +25,7 @@ import { api, basename, cleanError, git, joinPath } from '../api';
 import { computeGraph, laneColor } from '../lib/graph';
 import { parseTrack } from '../lib/format';
 import { Splitter, useUI, type MenuItem } from './ui';
-import { Toolbar, PULL_LABELS, type PullMode } from './Toolbar';
+import { Toolbar, PULL_LABELS, type Crumb, type PullMode } from './Toolbar';
 import { Sidebar } from './Sidebar';
 import { CommitGraph, type WipCounts } from './CommitGraph';
 import { CommitPanel, ComparePanel, StagingPanel } from './RightPanel';
@@ -54,12 +56,19 @@ interface Props {
   onRepoMenu: (e: React.MouseEvent) => void;
   appCommands: PaletteCommand[];
   onOpenRepo: (path: string) => void;
+  onStats: (stats: RepoStats) => void;
 }
 
 const EMPTY_STATUS: Status = { staged: [], unstaged: [], conflicted: [] };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const isOpResult = (r: unknown): r is OpResult => !!r && typeof r === 'object' && 'conflict' in r;
 const HISTORY_LIMIT = 50;
+// Layout: the app rail, the graph's minimum width, both splitters, and the side panels' minimums.
+const RAIL_W = 52;
+const CENTER_MIN = 300;
+const SPLITTERS = 10;
+const SIDE_MIN = 170;
+const RIGHT_MIN = 260;
 
 interface PushReport {
   ref: string;
@@ -85,7 +94,7 @@ function loadFilter(path: string): GraphFilter {
   return NO_FILTER;
 }
 
-export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpenRepo }: Props) {
+export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpenRepo, onStats }: Props) {
   const ui = useUI();
   const [info, setInfo] = useState<RepoInfo | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
@@ -102,8 +111,19 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
   const [amend, setAmend] = useState(false);
-  const [sideW, setSideW] = useState(() => Number(localStorage.getItem('sideW')) || 250);
-  const [rightW, setRightW] = useState(() => Number(localStorage.getItem('rightW')) || 380);
+  const [sideW, setSideW] = useState(() => Number(localStorage.getItem('sideW')) || 230);
+  const [rightW, setRightW] = useState(() => Number(localStorage.getItem('rightW')) || 340);
+  // In narrow windows the side panels give up width so the graph keeps at least 300px.
+  const [winW, setWinW] = useState(window.innerWidth);
+  useEffect(() => {
+    const on = () => setWinW(window.innerWidth);
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  const room = winW - RAIL_W - CENTER_MIN - SPLITTERS;
+  const squeeze = sideW + rightW > room ? room / (sideW + rightW) : 1;
+  const sideShown = Math.max(SIDE_MIN, Math.floor(sideW * squeeze));
+  const rightShown = Math.max(RIGHT_MIN, Math.floor(rightW * squeeze));
   const settings = useSettings();
   const pullMode = settings.pullMode;
   const [template, setTemplate] = useState('');
@@ -120,6 +140,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [fileView, setFileView] = useState<{ path: string; mode: FileViewMode; rev?: string } | null>(null);
   const [compareSha, setCompareSha] = useState<string | null>(null);
   const [graphFilter, setGraphFilter] = useState<GraphFilter>(() => loadFilter(path));
+  const [sideFocus, setSideFocus] = useState<{ key: string; n: number } | null>(null);
   const [rebaseEditor, setRebaseEditor] = useState<{ base: string; commits: RebaseCommit[] } | null>(null);
   const filterRef = useRef(graphFilter);
   filterRef.current = graphFilter;
@@ -399,6 +420,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       setFindOpen(true);
     }
     if (command.name === 'undo' || command.name === 'redo') applyHistory(command.name);
+    if (command.name === 'view-history') showHistory();
+    if (command.name === 'view-changes') showChanges();
+    if (command.name === 'view-prs') setSideFocus({ key: 'prs', n: Date.now() });
     if (command.name === 'palette') setPaletteOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command]);
@@ -1284,6 +1308,68 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     return [...cmds, ...appCommands];
   };
 
+  // ---------- rail views, location trail, status ----------
+  const showHistory = () => {
+    setDiff(null);
+    setFileView(null);
+    setCompareSha(null);
+    if (info?.head) selectSha(info.head);
+  };
+  const showChanges = () => {
+    if (!showWip) return ui.toast('No uncommitted changes', 'info');
+    setFileView(null);
+    setDiff(null);
+    setCompareSha(null);
+    setSelected(WIP);
+    setScrollTarget({ sha: WIP, n: Date.now() });
+  };
+
+  // While a diff or file view is open the header shows where you are, with a way back.
+  const closeViews = () => {
+    setDiff(null);
+    setFileView(null);
+  };
+  let trail: Crumb[] | null = null;
+  if (fileView) {
+    trail = [
+      { label: 'History', onClick: closeViews },
+      { label: fileView.path, mono: true },
+      { label: fileView.mode === 'blame' ? (fileView.rev ? `Blame at ${fileView.rev.slice(0, 7)}` : 'Blame') : 'File history' },
+    ];
+  } else if (diff) {
+    trail = [
+      { label: 'History', onClick: closeViews },
+      diff.kind === 'wip'
+        ? { label: 'Uncommitted changes', onClick: closeViews }
+        : { label: diff.sha.slice(0, 7), mono: true, onClick: closeViews },
+      { label: diff.file.path, mono: true },
+    ];
+  }
+
+  // Short names of the changed files, for the uncommitted-changes row in the graph.
+  const wipFiles = useMemo(() => {
+    const names = new Set<string>();
+    for (const f of [...status.conflicted, ...status.unstaged, ...status.staged]) names.add(f.path.split('/').pop()!);
+    return [...names];
+  }, [status]);
+
+  // The rail badges and status bar live in the app shell; report what they show.
+  const undoLabel = history.undo[history.undo.length - 1]?.label ?? null;
+  useEffect(() => {
+    if (!active) return;
+    onStats({
+      branch: info?.branch ?? (info?.head ? `detached ${info.head.slice(0, 7)}` : null),
+      ahead: track.ahead,
+      behind: track.behind,
+      changes: totalChanges,
+      prs: prs.length,
+      fetchedAt: info?.fetchedAt ?? null,
+      undoLabel,
+      busy,
+      view: selected === WIP || (!selected && showWip) ? 'changes' : 'history',
+    });
+  }, [active, info, track.ahead, track.behind, totalChanges, prs.length, undoLabel, busy, selected, showWip, onStats]);
+
   // ---------- render ----------
   if (loadError && !info) {
     return (
@@ -1300,33 +1386,16 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
 
   return (
     <div className="repo-view" style={{ display: active ? 'flex' : 'none' }}>
-      <Toolbar
-        repoName={basename(path)}
-        branch={info?.branch ?? null}
-        busy={busy}
-        ahead={track.ahead}
-        behind={track.behind}
-        canPop={stashes.length > 0}
-        undoLabel={history.undo[history.undo.length - 1]?.label ?? null}
-        redoLabel={history.redo[history.redo.length - 1]?.label ?? null}
-        onUndo={() => applyHistory('undo')}
-        onRedo={() => applyHistory('redo')}
-        onRepoMenu={onRepoMenu}
-        onBranchMenu={branchMenu}
-        onPull={() => pull()}
-        onPullMenu={pullMenu}
-        onPush={() => push()}
-        onBranch={() => createBranch()}
-        onStash={stash}
-        onPop={pop}
-        onFetch={fetchAll}
-        onTerminal={() => api.openTerminal(path)}
-        onEditor={() => openInEditor()}
-        onReveal={() => api.openPath(path)}
-      />
       <div className="repo-main">
-        <div className="side-wrap" style={{ width: sideW }}>
+        <div className="side-wrap" style={{ width: sideShown }}>
+          <div className="side-title">
+            <button className="side-title-btn" onClick={onRepoMenu} title={path}>
+              <span>{basename(path)}</span>
+              <ChevronDown size={12} />
+            </button>
+          </div>
           <Sidebar
+            focus={sideFocus}
             refs={refs}
             stashes={stashes}
             remotes={info?.remotes ?? []}
@@ -1356,7 +1425,29 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
             onNewBranch={() => createBranch()}
           />
         </div>
-        <Splitter onDrag={(dx) => setSideW((w) => clamp(w + dx, 170, 520))} />
+        <Splitter onDrag={(dx) => setSideW((w) => clamp(w + dx, SIDE_MIN, 520))} />
+        <div className="center-col">
+          <Toolbar
+            branch={info?.branch ?? null}
+            trail={trail}
+            onBack={closeViews}
+            busy={busy}
+            ahead={track.ahead}
+            behind={track.behind}
+            canPop={stashes.length > 0}
+            undoLabel={history.undo[history.undo.length - 1]?.label ?? null}
+            redoLabel={history.redo[history.redo.length - 1]?.label ?? null}
+            onUndo={() => applyHistory('undo')}
+            onRedo={() => applyHistory('redo')}
+            onBranchMenu={branchMenu}
+            onPull={() => pull()}
+            onPullMenu={pullMenu}
+            onPush={() => push()}
+            onBranch={() => createBranch()}
+            onStash={stash}
+            onPop={pop}
+            onFetch={fetchAll}
+          />
         <div className="center">
           {fileView ? (
             <FileHistory
@@ -1398,6 +1489,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               onUnstageFile={() => run('Unstaging…', () => git('unstage', path, [diff.file.path]))}
               onDiscardFile={() => discardFiles([diff.file])}
               onApplyHunk={(patch, cached, reverse) => run('Applying…', () => git('applyPatch', path, patch, cached, reverse))}
+              onHistory={diff.file.status === '?' || diff.file.status === 'A' ? undefined : () => openFileView(diff.file.path, 'history')}
+              onBlame={
+                diff.file.status === 'D' || diff.file.status === '?' || (diff.kind === 'wip' && diff.file.status === 'A')
+                  ? undefined
+                  : () => openFileView(diff.file.path, 'blame', diff.kind === 'commit' ? diff.sha : undefined)
+              }
             />
           ) : (
             <CommitGraph
@@ -1418,6 +1515,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               }}
               onSearch={(mode, q) => git<string[]>('searchCommits', path, mode, q)}
               onRefDrop={refDrop}
+              wipFiles={wipFiles}
               canLoadMore={commits.length >= logLimit}
               onLoadMore={() => setLogLimit((n) => n + LOG_PAGE)}
               filterNote={
@@ -1441,8 +1539,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
             />
           )}
         </div>
-        <Splitter onDrag={(dx) => setRightW((w) => clamp(w - dx, 280, 720))} />
-        <div className="right" style={{ width: rightW }}>
+        </div>
+        <Splitter onDrag={(dx) => setRightW((w) => clamp(w - dx, RIGHT_MIN, 720))} />
+        <div className="right" style={{ width: rightShown }}>
           {info && stagingVisible ? (
             <StagingPanel
               repo={path}
@@ -1455,6 +1554,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               amend={amend}
               setAmend={toggleAmend}
               activePath={diff?.kind === 'wip' ? diff.file.path : null}
+              activeStaged={diff?.kind === 'wip' ? diff.staged : null}
               onOpenDiff={(f, staged) => {
                 setFileView(null);
                 setDiff({ kind: 'wip', file: f, staged });

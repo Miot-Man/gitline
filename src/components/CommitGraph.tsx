@@ -1,10 +1,10 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Cloud, Tag, Check, Search, X, ChevronUp, ChevronDown, Pencil, Plus, Minus, AlertTriangle } from 'lucide-react';
+import { Cloud, Tag, Check, Search, X, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import type { Commit, Ref } from '../types';
 import { WIP } from '../types';
 import type { GraphRow } from '../lib/graph';
 import { RESERVED, laneColor } from '../lib/graph';
-import { authorColor, formatDate, initials } from '../lib/format';
+import { authorColor, dayLabel, formatDate, initials } from '../lib/format';
 import { refDragProps } from './Sidebar';
 
 export const ROW_H = 34;
@@ -57,6 +57,7 @@ interface Props {
   onRefDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void;
   canLoadMore: boolean;
   onLoadMore: () => void;
+  wipFiles: string[];
 }
 
 export type SearchMode = 'message' | 'changes' | 'path';
@@ -131,7 +132,7 @@ const RowGraph = memo(function RowGraph({ item, width, isHead }: { item: GraphIt
         {paths}
       </g>
       {isWip ? (
-        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke={color} strokeWidth={2} strokeDasharray="2.5 2" />
+        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke="var(--orange)" strokeWidth={2} strokeDasharray="2.5 2" />
       ) : isHead ? (
         <g>
           <circle cx={cx} cy={mid} r={R + 3.5} fill="none" stroke={color} strokeOpacity={0.35} strokeWidth={2.5} />
@@ -253,6 +254,7 @@ export function CommitGraph(props: Props) {
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 8);
   const end = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + 8);
 
+  const wipTotal = wip.modified + wip.added + wip.deleted + wip.conflicted;
   const rows: React.ReactElement[] = [];
   for (let i = start; i < end; i++) {
     const it = items[i];
@@ -260,6 +262,10 @@ export function CommitGraph(props: Props) {
     const isWip = c.sha === WIP;
     const color = laneColor(it.graph.afterColors[it.graph.col] ?? it.graph.beforeColors[it.graph.col] ?? it.graph.col);
     const pills = isWip ? [] : buildPills(refsBySha.get(c.sha) ?? [], c.sha === headSha, detached);
+    // Group history by day: only the first commit of each day shows the day.
+    const label = isWip ? '' : dayLabel(c.time);
+    const prev = items[i - 1]?.commit;
+    const day = isWip ? '' : !prev || prev.sha === WIP || dayLabel(prev.time) !== label ? label : '';
     const isSel = selected === c.sha;
     // Both ends of a comparison get the compare marker.
     const isCmp = !!compareSha && (compareSha === c.sha || isSel);
@@ -290,25 +296,18 @@ export function CommitGraph(props: Props) {
           )}
           {isWip ? (
             <span className="wip-msg">
-              <span className="wip-label">// WIP</span>
+              <span className="wip-label">
+                {wipTotal} uncommitted change{wipTotal === 1 ? '' : 's'}
+              </span>
+              {props.wipFiles.length > 0 && (
+                <span className="wip-files">
+                  · {props.wipFiles.slice(0, 3).join(', ')}
+                  {props.wipFiles.length > 3 ? ` +${props.wipFiles.length - 3} more` : ''}
+                </span>
+              )}
               {wip.conflicted > 0 && (
                 <span className="wip-count conflict">
-                  <AlertTriangle size={11} /> {wip.conflicted}
-                </span>
-              )}
-              {wip.modified > 0 && (
-                <span className="wip-count mod">
-                  <Pencil size={11} /> {wip.modified}
-                </span>
-              )}
-              {wip.added > 0 && (
-                <span className="wip-count add">
-                  <Plus size={11} /> {wip.added}
-                </span>
-              )}
-              {wip.deleted > 0 && (
-                <span className="wip-count del">
-                  <Minus size={11} /> {wip.deleted}
+                  <AlertTriangle size={11} /> {wip.conflicted} conflict{wip.conflicted === 1 ? '' : 's'}
                 </span>
               )}
             </span>
@@ -326,8 +325,9 @@ export function CommitGraph(props: Props) {
             </>
           )}
         </div>
-        <div className="col-date">{isWip ? '' : formatDate(c.time)}</div>
-        <div className="col-sha">{isWip ? '' : c.sha.slice(0, 7)}</div>
+        <div className="col-date" title={isWip ? undefined : formatDate(c.time)}>
+          {day}
+        </div>
       </div>
     );
   }
@@ -339,7 +339,6 @@ export function CommitGraph(props: Props) {
         <div className="col-msg">Commit</div>
         <div className="col-author">Author</div>
         <div className="col-date">Date</div>
-        <div className="col-sha">SHA</div>
         {findOpen && (
           <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
             <Search size={13} />

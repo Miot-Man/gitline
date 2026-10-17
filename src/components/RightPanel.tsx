@@ -1,5 +1,5 @@
 import { shortcut } from '../lib/settings';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal, X, ArrowUpDown, Users, ChevronDown, ChevronRight, EyeOff } from 'lucide-react';
 import type { Author, Commit, CommitDetails, FileChange, RepoInfo, Status } from '../types';
 import { git } from '../api';
@@ -23,6 +23,27 @@ export function StatusIcon({ status }: { status: string }) {
   }
 }
 
+// While one of a list's diffs is open, ↑/↓ open the previous / next file in that list.
+function useFileStepper(files: FileChange[], activePath: string | null, open: (f: FileChange) => void) {
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => {
+    if (!activePath) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      const t = e.target;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return;
+      const i = files.findIndex((f) => f.path === activePath);
+      const next = i < 0 ? undefined : files[i + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      openRef.current(next);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [files, activePath]);
+}
+
 function FileRow({
   file,
   active,
@@ -37,8 +58,12 @@ function FileRow({
   action?: React.ReactNode;
 }) {
   const { dir, name } = splitPath(file.path);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: 'nearest' });
+  }, [active]);
   return (
-    <div className={`file-row${active ? ' active' : ''}`} onClick={onClick} onContextMenu={onContextMenu} title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+    <div ref={ref} className={`file-row${active ? ' active' : ''}`} onClick={onClick} onContextMenu={onContextMenu} title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
       <StatusIcon status={file.status} />
       <span className="file-path">
         <span className="file-dir">{dir}</span>
@@ -64,6 +89,7 @@ interface StagingProps {
   amend: boolean;
   setAmend: (b: boolean) => void;
   activePath: string | null;
+  activeStaged: boolean | null;
   onOpenDiff: (f: FileChange, staged: boolean) => void;
   onStage: (files: FileChange[]) => void;
   onUnstage: (files: FileChange[]) => void;
@@ -95,6 +121,8 @@ const STATE_LABEL: Record<string, string> = {
 export function StagingPanel(p: StagingProps) {
   const { status, info } = p;
   const [showIgnored, setShowIgnored] = useState(false);
+  const stepList = p.activeStaged === true ? status.staged : p.activeStaged === false ? [...status.conflicted, ...status.unstaged] : [];
+  useFileStepper(stepList, p.activePath, (f) => p.onOpenDiff(f, p.activeStaged === true));
   const [ignored, setIgnored] = useState<string[] | null>(null);
 
   // Ignored files are only listed on demand; the list can be slow in big repos.
@@ -352,6 +380,7 @@ interface CommitPanelProps {
 export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSelectSha, onFileMenu, toast }: CommitPanelProps) {
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useFileStepper(details?.sha === sha ? details.files : [], activePath, (f) => details && onOpenDiff(details, f));
 
   useEffect(() => {
     let alive = true;
@@ -479,6 +508,7 @@ interface ComparePanelProps {
 export function ComparePanel({ repo, base, target, version, activePath, onOpenDiff, onSelectSha, onFileMenu, onSwap, onClose }: ComparePanelProps) {
   const [files, setFiles] = useState<FileChange[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useFileStepper(files ?? [], activePath, onOpenDiff);
 
   useEffect(() => {
     let alive = true;

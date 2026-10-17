@@ -161,12 +161,18 @@ const ops = {
           .trim();
       } catch {}
     }
+    // FETCH_HEAD is rewritten on every fetch/pull, so its mtime is when the repo last talked to a remote.
+    let fetchedAt = null;
+    try {
+      fetchedAt = fs.statSync(path.join(gd, 'FETCH_HEAD')).mtimeMs;
+    } catch {}
     return {
       head: head.stdout.trim() || null,
       branch: branch.stdout.trim() || null,
       state,
       mergeMsg,
       remotes: lines(remotes.stdout),
+      fetchedAt,
     };
   },
 

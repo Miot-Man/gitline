@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair, CloudOff, GitPullRequest, GitPullRequestDraft, Eraser, RefreshCw, FolderTree, Package, HardDrive, AlertTriangle } from 'lucide-react';
 import type { GhStatus, GraphFilter, LfsInfo, PullRequest, Ref, Stash, Submodule, Worktree } from '../types';
 import { parseTrack } from '../lib/format';
@@ -8,6 +8,8 @@ interface Props {
   stashes: Stash[];
   remotes: string[];
   filter: GraphFilter;
+  // Set by the rail to open and scroll to a section (e.g. pull requests).
+  focus: { key: string; n: number } | null;
   laneColors: Map<string, string>;
   prs: PullRequest[];
   gh: GhStatus | null;
@@ -71,6 +73,19 @@ export function Sidebar(props: Props) {
   const { refs, stashes, remotes } = props;
   const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!props.focus) return;
+    const key = props.focus.key;
+    setCollapsed((s) => {
+      const n = new Set(s);
+      n.delete(key);
+      return n;
+    });
+    requestAnimationFrame(() => scrollRef.current?.querySelector(`[data-section="${key}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.focus]);
   const f = filter.trim().toLowerCase();
 
   const toggle = (k: string) =>
@@ -109,7 +124,7 @@ export function Sidebar(props: Props) {
   const section = (key: string, title: string, count: number, body: React.ReactNode, action?: React.ReactNode) => {
     const open = !collapsed.has(key);
     return (
-      <div className="side-section">
+      <div className="side-section" data-section={key}>
         <div className="side-header" onClick={() => toggle(key)}>
           {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           <span>{title}</span>
@@ -129,10 +144,10 @@ export function Sidebar(props: Props) {
         <Search size={13} />
         <input placeholder="Filter (branches, tags, stashes)" value={filter} onChange={(e) => setFilter(e.target.value)} />
       </div>
-      <div className="side-scroll">
+      <div className="side-scroll" ref={scrollRef}>
         {section(
           'local',
-          'LOCAL',
+          'Branches',
           locals.length,
           renderTree(buildTree(locals.filter(match)), 0, 'local', 'local'),
           <>
@@ -150,7 +165,7 @@ export function Sidebar(props: Props) {
           props.gh.reason !== 'No GitHub remote' &&
           section(
             'prs',
-            'PULL REQUESTS',
+            'Pull requests',
             props.prs.length,
             props.gh.ok ? (
               prs.length ? (
@@ -183,7 +198,7 @@ export function Sidebar(props: Props) {
           )}
         {section(
           'remote',
-          'REMOTE',
+          'Remotes',
           remotes.length,
           remotes.map((remote) => {
             const key = `remote:${remote}`;
@@ -211,7 +226,7 @@ export function Sidebar(props: Props) {
         )}
         {section(
           'stashes',
-          'STASHES',
+          'Stashes',
           stashes.length,
           filteredStashes.map((s) => (
             <div
@@ -230,7 +245,7 @@ export function Sidebar(props: Props) {
         {props.worktrees.length > 1 &&
           section(
             'worktrees',
-            'WORKTREES',
+            'Worktrees',
             props.worktrees.length,
             props.worktrees.map((w) => (
               <div
@@ -251,7 +266,7 @@ export function Sidebar(props: Props) {
         {props.submodules.length > 0 &&
           section(
             'submodules',
-            'SUBMODULES',
+            'Submodules',
             props.submodules.length,
             props.submodules.map((s) => (
               <div
@@ -271,7 +286,7 @@ export function Sidebar(props: Props) {
         {props.lfs?.used &&
           section(
             'lfs',
-            'GIT LFS',
+            'Git LFS',
             props.lfs.files,
             props.lfs.installed ? (
               <div className="side-item" style={{ paddingLeft: 24 }} onClick={props.onLfsPull} title="Download the large files for this checkout">
@@ -286,7 +301,7 @@ export function Sidebar(props: Props) {
           )}
         {section(
           'tags',
-          'TAGS',
+          'Tags',
           tags.length,
           tags.filter(match).map((t) => (
             <div

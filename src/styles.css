@@ -300,90 +300,214 @@ pre {
   height: 100%;
 }
 
-.tabbar {
-  height: 38px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 0 8px;
-  background: var(--bg-tabbar);
-  border-bottom: 1px solid var(--border-soft);
-  -webkit-app-region: drag;
-}
-.platform-darwin .tabbar {
-  padding-left: 84px;
-}
-
-.tab {
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 31px;
-  min-width: 120px;
-  max-width: 220px;
-  padding: 0 8px 0 12px;
-  border-radius: 0;
-  color: var(--muted);
-  cursor: default;
-  background: transparent;
-}
-.tab:hover {
-  background: var(--bg-tab-hover);
-  color: var(--text);
-}
-.tab.active {
-  background: var(--bg-toolbar);
-  color: var(--text-strong);
-}
-.tab-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tab-close {
-  display: inline-flex;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  border-radius: 2px;
-  padding: 2px;
-  opacity: 0;
-  cursor: pointer;
-}
-.tab:hover .tab-close,
-.tab.active .tab-close {
-  opacity: 1;
-}
-.tab-close:hover {
-  background: var(--bg-hover);
-  color: var(--text-strong);
-}
-.tab-new {
-  -webkit-app-region: no-drag;
-  align-self: center;
-  display: inline-flex;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  padding: 5px;
-  border-radius: 2px;
-  cursor: pointer;
-}
-.tab-new:hover {
-  color: var(--text-strong);
-  background: var(--bg-hover);
-}
-
-.app-body {
+/* ---------- app shell: rail, body, status bar ---------- */
+.app-main {
   flex: 1;
   min-height: 0;
   display: flex;
 }
+.rail {
+  width: 52px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+  background: var(--bg-tabbar);
+  border-right: 1px solid var(--border-soft);
+}
+.rail button {
+  -webkit-app-region: no-drag;
+}
+.rail-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.rail-tile {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rail-tile:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.rail-tile.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.rail-tile.add {
+  border-style: dashed;
+}
+.rail-sep {
+  width: 24px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--border-soft);
+}
+.rail-btn {
+  position: relative;
+  width: 40px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.rail-btn.active {
+  background: var(--bg-panel-2);
+  color: var(--text-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rail-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  color: var(--bg);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+.rail-badge.changes {
+  background: var(--orange);
+}
+.rail-badge.prs {
+  background: var(--green);
+}
+.rail-spacer {
+  flex: 1;
+}
+.statusbar {
+  height: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--bg-tabbar);
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.status-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.status-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.status-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-link:hover {
+  color: var(--text-strong);
+}
+.status-link.changes {
+  color: var(--orange);
+}
+.status-busy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.status-spacer {
+  flex: 1;
+}
 
-/* ---------- toolbar ---------- */
+/* Repo name above the sidebar, lined up with the header above the graph. */
+.side-title {
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--divider);
+  -webkit-app-region: drag;
+}
+.side-title-btn {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-strong);
+  font-weight: 600;
+  cursor: pointer;
+}
+.side-title-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-title-btn:hover {
+  background: var(--bg-hover);
+}
+.center-col {
+  flex: 1;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---------- toolbar (header above the graph) ---------- */
 .repo-view {
   flex: 1;
   min-width: 0;
@@ -391,81 +515,129 @@ pre {
 }
 
 .toolbar {
-  height: 58px;
+  height: 48px;
   flex-shrink: 0;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  container: toolbar / inline-size;
+  overflow: hidden;
+  display: flex;
   align-items: center;
-  padding: 0 12px;
+  gap: 12px;
+  padding: 0 10px 0 14px;
   background: var(--bg-toolbar);
   border-bottom: 1px solid var(--divider);
+  -webkit-app-region: drag;
+}
+.toolbar button {
+  -webkit-app-region: no-drag;
 }
 .toolbar-left {
+  flex: 1;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.trail-item {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.toolbar-center {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-}
-
-.crumb {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  border: none;
-  background: transparent;
-  padding: 4px 8px;
-  border-radius: 2px;
-  cursor: pointer;
-  min-width: 0;
-}
-.crumb:hover {
-  background: var(--bg-hover);
-}
-.crumb-label {
-  font-size: 10px;
-  text-transform: lowercase;
+.trail-muted,
+.trail-link {
   color: var(--muted);
 }
-.crumb-value {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-weight: 600;
-  color: var(--text-strong);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
+.trail-sep {
+  color: var(--scrollbar-hover);
 }
-.crumb-sep {
-  width: 1px;
-  height: 26px;
-  background: var(--border);
-}
-
-.tool-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  min-width: 52px;
-  padding: 5px 8px;
+.trail-link {
   border: none;
   background: transparent;
+  padding: 3px 2px;
   border-radius: 2px;
+  cursor: pointer;
+}
+.trail-link:hover {
+  color: var(--text-strong);
+}
+.trail-current {
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trail .mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.trail-branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.trail-branch:hover {
+  background: var(--bg-hover);
+}
+.trail-back {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
+}
+.trail-back:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+.tool-group {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+.tool-group > * + * {
+  border-left: 1px solid var(--border) !important;
+}
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tool-btn.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
 }
 .tool-btn:hover:not(:disabled) {
   background: var(--bg-hover);
@@ -475,46 +647,27 @@ pre {
   opacity: 0.4;
   cursor: default;
 }
-.tool-icon {
-  position: relative;
-  display: flex;
-}
-.tool-badge {
-  position: absolute;
-  top: -6px;
-  right: -12px;
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 15px;
-  text-align: center;
-}
 .tool-label {
+  font-size: 12px;
+}
+.tool-count {
+  font-family: var(--mono);
   font-size: 11px;
 }
-.tool-sep {
-  width: 1px;
-  height: 30px;
-  margin: 0 6px;
-  background: var(--border);
+.tool-count.pull {
+  color: var(--accent);
 }
-.split-btn {
-  display: flex;
-  align-items: center;
-}
-.split-btn .tool-btn {
-  padding-right: 4px;
+.tool-count.push {
+  color: var(--orange);
 }
 .split-caret {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 28px;
   border: none;
   background: transparent;
   color: var(--muted);
-  padding: 14px 3px;
-  border-radius: 2px;
   cursor: pointer;
 }
 .split-caret:hover:not(:disabled) {
@@ -527,7 +680,6 @@ pre {
   gap: 6px;
   color: var(--muted);
   font-size: 12px;
-  margin-right: 8px;
   white-space: nowrap;
 }
 
@@ -614,9 +766,8 @@ pre {
   gap: 5px;
   height: 30px;
   padding: 0 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
   cursor: pointer;
 }
@@ -625,11 +776,9 @@ pre {
 }
 .side-count {
   margin-left: 2px;
-  padding: 0 6px;
-  border-radius: 3px;
-  background: var(--bg-panel-2);
-  font-size: 10px;
-  line-height: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--scrollbar-hover);
 }
 .side-header-actions {
   margin-left: auto;
@@ -807,10 +956,11 @@ pre {
   text-overflow: ellipsis;
 }
 .col-date {
-  width: 150px;
+  width: 110px;
   flex-shrink: 0;
-  padding: 0 10px;
-  color: var(--muted);
+  padding: 0 14px 0 10px;
+  color: var(--text);
+  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   font-size: 12px;
@@ -901,8 +1051,12 @@ pre {
   gap: 10px;
 }
 .wip-label {
+  color: var(--orange);
+}
+.wip-files {
   color: var(--muted);
-  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .wip-count {
   display: inline-flex;
@@ -961,7 +1115,7 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 40px;
+  min-height: 48px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-panel-2);
@@ -2421,4 +2575,92 @@ kbd {
 /* Lane colors are tuned for dark backgrounds; darken tag text so it stays readable on white. */
 :root[data-theme='light'] .ref-pill:not(.head):not(.tag) {
   color: color-mix(in srgb, var(--tag) 60%, #000);
+}
+
+/* Diff header: counts instead of the path, which the toolbar trail now shows. */
+.diff-counts {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.diff-counts .add {
+  color: var(--green);
+}
+.diff-counts .del {
+  color: var(--red);
+}
+.diff-renamed {
+  color: var(--muted);
+  font-size: 12px;
+}
+.diff-view > .diff-header,
+.conflict-editor > .diff-header,
+.file-view > .diff-header {
+  min-height: 38px;
+}
+
+/* Narrow middle column: buttons drop their labels (icons and counts stay). */
+@container toolbar (max-width: 700px) {
+  .tool-label {
+    display: none;
+  }
+  .tool-btn {
+    padding: 0 8px;
+  }
+}
+/* Still narrower: Branch/Stash/Pop (also in the palette), then Undo/Redo (still on Ctrl/⌘+Z). Pull and Push always stay. */
+@container toolbar (max-width: 470px) {
+  .tool-group.refs {
+    display: none;
+  }
+}
+@container toolbar (max-width: 380px) {
+  .tool-group.undo-redo {
+    display: none;
+  }
+}
+
+/* Rail tooltips: shown beside the icon on hover or keyboard focus. */
+.rail-tip {
+  position: fixed;
+  z-index: 1100;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 320px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-menu);
+  border-radius: 2px;
+  background: var(--bg-menu);
+  box-shadow: 0 6px 18px var(--shadow);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.rail-tip-title {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 500;
+}
+.rail-tip-detail {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* macOS only: a title strip above everything for the window buttons (Windows and Linux use the system title bar). */
+.titlebar {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tabbar);
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 12px;
+  -webkit-app-region: drag;
+  user-select: none;
 }

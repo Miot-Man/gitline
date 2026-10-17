@@ -224,7 +224,8 @@ function createWindow() {
     title: 'Gitline',
     backgroundColor: '#1b1d23',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 14, y: 12 },
+    // Centred in the 30px title strip the renderer draws at the top on macOS.
+    trafficLightPosition: { x: 12, y: 9 },
     // macOS and Windows take the icon from the app bundle / exe; Linux needs it on the window.
     ...(process.platform === 'linux' ? { icon: path.join(__dirname, '..', 'build', 'icon.png') } : {}),
     webPreferences: {
