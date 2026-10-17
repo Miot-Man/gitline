@@ -14,7 +14,8 @@ interface Api {
   openRepoDialog(): Promise<string | null>;
   pickFolder(title: string): Promise<string | null>;
   validateRepo(p: string): Promise<string | null>;
-  recent: { get(): Promise<string[]>; add(p: string): Promise<void>; remove(p: string): Promise<void> };
+  recent: { get(): Promise<string[]>; add(p: string): Promise<void>; remove(p: string): Promise<void>; opened(): Promise<Record<string, number>> };
+  home(): Promise<string>;
   watch(p: string): Promise<void>;
   unwatch(p: string): Promise<void>;
   showItem(p: string): Promise<void>;

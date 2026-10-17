@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, row, test } from './fixtures';
 
 test('commit from the staging panel, then undo and redo it', async ({ gl }) => {
@@ -283,4 +285,35 @@ test('picking a language in a diff remembers it for that file type', async ({ gl
   await expect(page.locator('.diff-table .hljs-keyword', { hasText: 'local' })).toBeVisible();
   const rules = await page.evaluate(() => JSON.parse(localStorage.getItem('settings') ?? '{}').syntaxRules);
   expect(rules).toEqual([{ pattern: '.p8', language: 'lua' }]);
+});
+
+test('home lists recent repos, and clones from a URL into the remembered folder', async ({ gl }) => {
+  const { page } = gl;
+  const root = path.dirname(gl.repo);
+  gl.write('a.txt', '1\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  gl.git('init', '-q', '--bare', '../origin.git');
+  gl.git('remote', 'add', 'origin', '../origin.git');
+  gl.git('push', '-q', '-u', 'origin', 'main');
+  gl.write('b.txt', '2\n');
+  fs.writeFileSync(path.join(root, 'profile', 'recent.json'), JSON.stringify([gl.repo]));
+  await page.evaluate((p) => localStorage.setItem('cloneParent', p), root);
+  await page.reload();
+
+  const repoRow = page.locator('.repo-row').filter({ hasText: 'main' });
+  await expect(repoRow).toContainText('repo');
+  await expect(repoRow).toContainText('1 change');
+  await page.getByRole('textbox', { name: 'Filter repositories' }).fill('nothing-like-it');
+  await expect(page.locator('.repo-none')).toBeVisible();
+  await page.getByRole('textbox', { name: 'Filter repositories' }).fill('');
+
+  await page.getByRole('button', { name: 'Clone…' }).click();
+  await page.getByRole('tab', { name: 'URL' }).click();
+  await page.getByRole('textbox', { name: 'Repository URL' }).fill(path.join(root, 'origin.git'));
+  await expect(page.getByRole('textbox', { name: 'Folder name' })).toHaveValue('origin');
+  await page.getByRole('textbox', { name: 'Folder name' }).fill('copy');
+  await page.getByRole('button', { name: 'Clone', exact: true }).click();
+  await expect(page.locator('.toolbar')).toBeVisible();
+  expect(fs.existsSync(path.join(root, 'copy', 'a.txt'))).toBe(true);
 });

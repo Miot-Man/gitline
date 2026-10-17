@@ -252,6 +252,25 @@ const ops = {
     });
   },
 
+  // A cheap overview for the home screen: branch, how far it is from its upstream (as of the last fetch),
+  // how many files have changed, and where origin points.
+  async repoSummary(cwd) {
+    const [st, origin] = await Promise.all([
+      git(cwd, ['status', '--porcelain=v2', '--branch']),
+      git(cwd, ['config', '--get', 'remote.origin.url'], { allowFail: true }),
+    ]);
+    const s = { branch: null, upstream: false, ahead: 0, behind: 0, changes: 0, origin: origin.stdout.trim() || null };
+    for (const l of lines(st.stdout)) {
+      if (l.startsWith('# branch.head ')) s.branch = l.slice(14) === '(detached)' ? null : l.slice(14);
+      else if (l.startsWith('# branch.upstream ')) s.upstream = true;
+      else if (l.startsWith('# branch.ab ')) {
+        const m = l.match(/\+(\d+) -(\d+)/);
+        if (m) [s.ahead, s.behind] = [Number(m[1]), Number(m[2])];
+      } else if (!l.startsWith('#')) s.changes++;
+    }
+    return s;
+  },
+
   async status(cwd) {
     const r = await git(cwd, ['status', '--porcelain=v1', '-z', '-uall']);
     const parts = r.stdout.split('\0');
@@ -825,7 +844,7 @@ const ops = {
       'api',
       'user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member',
       '--jq',
-      '[.[] | {name: .full_name, description: .description, private: .private, url: .clone_url, updated: .updated_at}]',
+      '[.[] | {name: .full_name, description: .description, private: .private, url: .clone_url, updated: .updated_at, language: .language}]',
     ]);
     return JSON.parse(out);
   },

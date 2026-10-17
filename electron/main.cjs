@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = requir
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { ops } = require('./git.cjs');
 
 let win = null;
@@ -35,6 +36,20 @@ function readRecent() {
 function writeRecent(list) {
   fs.mkdirSync(path.dirname(recentFile()), { recursive: true });
   fs.writeFileSync(recentFile(), JSON.stringify(list.slice(0, 20), null, 2));
+}
+// When each recent repo was last opened (ms), kept beside recent.json so older lists still load.
+const openedFile = () => path.join(app.getPath('userData'), 'opened.json');
+function readOpened() {
+  try {
+    return JSON.parse(fs.readFileSync(openedFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+function markOpened(p) {
+  const opened = readOpened();
+  opened[p] = Date.now();
+  fs.writeFileSync(openedFile(), JSON.stringify(opened, null, 2));
 }
 
 // ---------- file watching ----------
@@ -111,7 +126,12 @@ ipcMain.handle('theme:set', (_e, theme) => {
 });
 
 ipcMain.handle('recent:get', () => readRecent());
-ipcMain.handle('recent:add', (_e, p) => writeRecent([p, ...readRecent().filter((x) => x !== p)]));
+ipcMain.handle('recent:add', (_e, p) => {
+  writeRecent([p, ...readRecent().filter((x) => x !== p)]);
+  markOpened(p);
+});
+ipcMain.handle('recent:opened', () => readOpened());
+ipcMain.handle('app:home', () => os.homedir());
 ipcMain.handle('recent:remove', (_e, p) => writeRecent(readRecent().filter((x) => x !== p)));
 ipcMain.handle('repo:watch', (_e, p) => watchRepo(p));
 ipcMain.handle('repo:unwatch', (_e, p) => unwatchRepo(p));

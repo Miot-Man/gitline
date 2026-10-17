@@ -24,6 +24,23 @@ describe('status, staging and commits', () => {
     expect(info.branch).toBe('main');
   });
 
+  it('summarises a repo for the home screen', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'a.txt', 'one\n');
+    await commitAll(dir, 'first');
+    expect(await ops.repoSummary(dir)).toEqual({ branch: 'main', upstream: false, ahead: 0, behind: 0, changes: 0, origin: null });
+
+    const remote = tmpDir();
+    sh(remote, 'init', '-q', '--bare');
+    sh(dir, 'remote', 'add', 'origin', remote);
+    sh(dir, 'push', '-q', '-u', 'origin', 'main');
+    write(dir, 'a.txt', 'two\n');
+    await commitAll(dir, 'second');
+    write(dir, 'a.txt', 'three\n');
+    write(dir, 'b.txt', 'new\n');
+    expect(await ops.repoSummary(dir)).toEqual({ branch: 'main', upstream: true, ahead: 1, behind: 0, changes: 2, origin: remote });
+  });
+
   it('shows untracked files as a diff', async () => {
     const dir = await tmpRepo();
     write(dir, 'new.txt', 'hello\n');
