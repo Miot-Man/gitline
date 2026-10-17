@@ -82,16 +82,23 @@ function gh(cwd, args) {
   });
 }
 
-// Where a bisect stands after a step. The finished state comes from `git bisect log`, which records
-// "# first bad commit: [sha] ..." the same way across git versions; the console wording has changed.
-async function bisectResult(cwd, r) {
-  const out = `${r.stdout}\n${r.stderr}`;
-  const log = (await git(cwd, ['bisect', 'log'], { allowFail: true })).stdout;
-  const found = log.match(/^# first bad commit: \[([0-9a-f]{40})\]/m) ?? out.match(/([0-9a-f]{40}) is the first bad commit/);
-  if (found) return { done: true, firstBad: found[1] };
-  if (/only 'skip'ped commits left/.test(out)) return { done: true, firstBad: null, message: "Couldn't narrow it down: only skipped commits are left." };
-  const left = out.match(/Bisecting: (\d+) revisions? left to test after this \(roughly (\d+) steps?\)/);
-  return { done: false, left: left ? Number(left[1]) : null, steps: left ? Number(left[2]) : null };
+// Where a bisect stands after a step, worked out from bisect's own refs rather than its messages
+// (the wording, and whether the result is logged, differ between git versions). The candidates are the
+// commits reachable from the bad commit but from no good one; once only the bad commit is left, it's
+// the first bad commit.
+async function bisectResult(cwd) {
+  const bad = (await git(cwd, ['rev-parse', '--verify', '-q', 'refs/bisect/bad'], { allowFail: true })).stdout.trim();
+  if (!bad) return { done: false, left: null, steps: null };
+  const refs = async (pattern) => lines((await git(cwd, ['for-each-ref', '--format=%(objectname)', pattern])).stdout);
+  const goods = await refs('refs/bisect/good-*');
+  const skips = new Set(await refs('refs/bisect/skip-*'));
+  const candidates = lines((await git(cwd, ['rev-list', bad, ...(goods.length ? ['--not', ...goods] : [])])).stdout);
+  if (candidates.length <= 1) return { done: true, firstBad: bad };
+  const untested = candidates.filter((c) => c !== bad && !skips.has(c));
+  if (!untested.length) {
+    return { done: true, firstBad: null, message: `Couldn't narrow it down: the first bad commit is one of ${candidates.length} commits, and the rest were skipped.` };
+  }
+  return { done: false, left: untested.length - 1, steps: Math.ceil(Math.log2(untested.length + 1)) - 1 };
 }
 
 const IDENTITY_DIR = () => path.join(os.homedir(), '.config', 'gitline', 'identities');
@@ -546,11 +553,13 @@ const ops = {
   async bisectStart(cwd, bad, good) {
     await git(cwd, ['bisect', 'start']);
     await git(cwd, ['bisect', 'bad', bad]);
-    return bisectResult(cwd, await git(cwd, ['bisect', 'good', good]));
+    await git(cwd, ['bisect', 'good', good]);
+    return bisectResult(cwd);
   },
   // `verdict` is good, bad or skip; `sha` defaults to the commit being tested.
   async bisectMark(cwd, verdict, sha) {
-    return bisectResult(cwd, await git(cwd, ['bisect', verdict, ...(sha ? [sha] : [])]));
+    await git(cwd, ['bisect', verdict, ...(sha ? [sha] : [])]);
+    return bisectResult(cwd);
   },
   async bisectReset(cwd) {
     await git(cwd, ['bisect', 'reset']);
