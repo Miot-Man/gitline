@@ -2,7 +2,7 @@
   "name": "gitline",
   "productName": "Gitline",
   "version": "0.1.0",
-  "description": "A desktop Git client",
+  "description": "A desktop Git client for macOS, Windows and Linux",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -16,6 +16,8 @@
     "dist": "npm run build && electron-builder"
   },
   "devDependencies": {
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
@@ -37,7 +39,10 @@
     "electron-winstaller": false,
     "fsevents": false
   },
-  "author": "Miot-Man",
+  "author": {
+    "name": "Miot-Man",
+    "email": "dattmoose995@gmail.com"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Miot-Man/gitline.git"
@@ -58,8 +63,18 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
       ]
     },
     "win": {
@@ -74,15 +89,47 @@
     "linux": {
       "target": [
         "AppImage",
-        "deb"
+        "rpm",
+        "pacman"
       ],
       "category": "Development",
-      "maintainer": "Miot-Man"
+      "maintainer": "Miot-Man <dattmoose995@gmail.com>",
+      "synopsis": "Desktop Git client",
+      "executableName": "gitline"
     },
     "publish": {
       "provider": "github",
       "owner": "Miot-Man",
       "repo": "gitline"
-    }
-  }
+    },
+    "rpm": {
+      "depends": [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "git"
+      ]
+    },
+    "pacman": {
+      "depends": [
+        "gtk3",
+        "nss",
+        "alsa-lib",
+        "libxss",
+        "libxtst",
+        "libnotify",
+        "xdg-utils",
+        "at-spi2-core",
+        "libsecret",
+        "git"
+      ]
+    },
+    "artifactName": "Gitline-${version}-${arch}.${ext}"
+  },
+  "homepage": "https://github.com/Miot-Man/gitline"
 }

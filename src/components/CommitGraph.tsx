@@ -1,16 +1,18 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Laptop, Cloud, Tag, Check, Search, X, ChevronUp, ChevronDown, Pencil, Plus, Minus, AlertTriangle } from 'lucide-react';
+import { Cloud, Tag, Check, Search, X, ChevronUp, ChevronDown, Pencil, Plus, Minus, AlertTriangle } from 'lucide-react';
 import type { Commit, Ref } from '../types';
 import { WIP } from '../types';
 import type { GraphRow } from '../lib/graph';
 import { RESERVED, laneColor } from '../lib/graph';
-import { formatDate, initials } from '../lib/format';
+import { authorColor, formatDate, initials } from '../lib/format';
 import { refDragProps } from './Sidebar';
 
-export const ROW_H = 32;
-const LANE_W = 24;
-const R = 11;
-const PAD = 8;
+export const ROW_H = 34;
+// Lanes are narrower than half a row, so a hop to the next lane fits a 45° diagonal.
+const LANE_W = 16;
+const R = 5;
+const PAD = 10;
+const MAX_TAGS = 2;
 
 export interface GraphItem {
   commit: Commit;
@@ -83,21 +85,15 @@ function buildPills(refs: Ref[], isHeadCommit: boolean, detached: boolean): Pill
 
 const x = (lane: number) => PAD + lane * LANE_W + LANE_W / 2;
 
-function curve(x1: number, y1: number, x2: number, y2: number) {
-  if (x1 === x2) return `M${x1} ${y1}L${x2} ${y2}`;
-  const my = (y1 + y2) / 2;
-  return `M${x1} ${y1}C${x1} ${my} ${x2} ${my} ${x2} ${y2}`;
+// Metro-map lane segment: a vertical run joined to a 45° diagonal when there's room for one.
+// `diagonalFirst` leaves the start point diagonally (branching off); otherwise the diagonal arrives last (merging in).
+function metro(x1: number, y1: number, x2: number, y2: number, diagonalFirst: boolean) {
+  const dx = Math.abs(x2 - x1);
+  if (dx === 0 || dx > y2 - y1) return `M${x1} ${y1}L${x2} ${y2}`;
+  return diagonalFirst ? `M${x1} ${y1}L${x2} ${y1 + dx}V${y2}` : `M${x1} ${y1}V${y2 - dx}L${x2} ${y2}`;
 }
 
-const RowGraph = memo(function RowGraph({
-  item,
-  width,
-  hasRefs,
-}: {
-  item: GraphItem;
-  width: number;
-  hasRefs: boolean;
-}) {
+const RowGraph = memo(function RowGraph({ item, width, isHead }: { item: GraphItem; width: number; isHead: boolean }) {
   const { commit, graph } = item;
   const { col, before, after, parentCols, beforeColors, afterColors } = graph;
   const mid = ROW_H / 2;
@@ -111,7 +107,7 @@ const RowGraph = memo(function RowGraph({
   before.forEach((sha, k) => {
     if (sha === null || sha === RESERVED) return;
     if (sha === commit.sha) {
-      paths.push(<path key={`t${k}`} d={curve(x(k), 0, x(col), mid)} stroke={inColor(k)} />);
+      paths.push(<path key={`t${k}`} d={metro(x(k), 0, x(col), mid, false)} stroke={inColor(k)} />);
     } else if (after[k] === sha) {
       paths.push(<path key={`p${k}`} d={`M${x(k)} 0L${x(k)} ${ROW_H}`} stroke={inColor(k)} />);
     }
@@ -120,7 +116,7 @@ const RowGraph = memo(function RowGraph({
     paths.push(
       <path
         key={`b${i}`}
-        d={curve(x(col), mid, x(j), ROW_H)}
+        d={metro(x(col), mid, x(j), ROW_H, true)}
         stroke={outColor(j)}
         strokeDasharray={isWip ? '3 3' : undefined}
       />
@@ -128,24 +124,26 @@ const RowGraph = memo(function RowGraph({
   });
 
   const isMerge = commit.parents.length > 1;
+  const cx = x(col);
   return (
     <svg width={width} height={ROW_H} className="graph-svg">
-      {hasRefs && <line x1={0} y1={mid} x2={x(col)} y2={mid} stroke={color} strokeWidth={2} opacity={0.7} />}
-      <g fill="none" strokeWidth={2}>
+      <g fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
         {paths}
       </g>
       {isWip ? (
-        <circle cx={x(col)} cy={mid} r={R - 1} fill="var(--bg-graph)" stroke={color} strokeWidth={2} strokeDasharray="3 2" />
-      ) : isMerge ? (
-        <circle cx={x(col)} cy={mid} r={5} fill={color} />
-      ) : (
+        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke={color} strokeWidth={2} strokeDasharray="2.5 2" />
+      ) : isHead ? (
         <g>
-          <circle cx={x(col)} cy={mid} r={R} fill={color} />
-          <circle cx={x(col)} cy={mid} r={R - 2} fill="var(--bg-avatar)" />
-          <text x={x(col)} y={mid + 3.5} textAnchor="middle" className="avatar-text">
-            {initials(commit.author)}
-          </text>
+          <circle cx={cx} cy={mid} r={R + 3.5} fill="none" stroke={color} strokeOpacity={0.35} strokeWidth={2.5} />
+          <circle cx={cx} cy={mid} r={R + 0.5} fill={color} />
         </g>
+      ) : isMerge ? (
+        <g>
+          <circle cx={cx} cy={mid} r={R + 0.5} fill="var(--bg-graph)" stroke={color} strokeWidth={2.5} />
+          <circle cx={cx} cy={mid} r={2} fill={color} />
+        </g>
+      ) : (
+        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke={color} strokeWidth={2.5} />
       )}
     </svg>
   );
@@ -156,7 +154,6 @@ export function CommitGraph(props: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewH, setViewH] = useState(800);
-  const [refW, setRefW] = useState(200);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('message');
   const [serverHits, setServerHits] = useState<{ key: string; shas: Set<string> } | null>(null);
@@ -256,19 +253,6 @@ export function CommitGraph(props: Props) {
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 8);
   const end = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + 8);
 
-  const onRefResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = refW;
-    const move = (ev: MouseEvent) => setRefW(Math.max(90, Math.min(500, startW + ev.clientX - startX)));
-    const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  };
-
   const rows: React.ReactElement[] = [];
   for (let i = start; i < end; i++) {
     const it = items[i];
@@ -292,23 +276,18 @@ export function CommitGraph(props: Props) {
         }}
         onContextMenu={(e) => props.onRowMenu(e, c)}
       >
-        <div className="col-refs" style={{ width: refW }}>
-          {pills.length > 0 && (
-            <>
-              <RefPill pill={pills[0]} color={color} onMenu={props.onRefMenu} onDouble={props.onRefDoubleClick} onDrop={props.onRefDrop} />
-              {pills.length > 1 && (
-                <span className="pill-more" style={{ borderColor: color }} title={pills.slice(1).map((p) => p.label).join('\n')}>
-                  +{pills.length - 1}
-                </span>
-              )}
-              <span className="ref-line" style={{ borderColor: color }} />
-            </>
-          )}
-        </div>
         <div className="col-graph" style={{ width: graphW }}>
-          <RowGraph item={it} width={graphW} hasRefs={pills.length > 0} />
+          <RowGraph item={it} width={graphW} isHead={c.sha === headSha && !isWip} />
         </div>
         <div className="col-msg">
+          {pills.slice(0, MAX_TAGS).map((p) => (
+            <RefPill key={p.key} pill={p} color={color} onMenu={props.onRefMenu} onDouble={props.onRefDoubleClick} onDrop={props.onRefDrop} />
+          ))}
+          {pills.length > MAX_TAGS && (
+            <span className="pill-more" title={pills.slice(MAX_TAGS).map((p) => p.label).join('\n')}>
+              +{pills.length - MAX_TAGS}
+            </span>
+          )}
           {isWip ? (
             <span className="wip-msg">
               <span className="wip-label">// WIP</span>
@@ -334,10 +313,19 @@ export function CommitGraph(props: Props) {
               )}
             </span>
           ) : (
-            c.subject
+            <span className="msg-subject">{c.subject}</span>
           )}
         </div>
-        <div className="col-author">{isWip ? '' : c.author}</div>
+        <div className="col-author">
+          {!isWip && (
+            <>
+              <span className="author-dot" style={{ background: authorColor(c.email) }}>
+                {initials(c.author)}
+              </span>
+              <span className="row-author">{c.author}</span>
+            </>
+          )}
+        </div>
         <div className="col-date">{isWip ? '' : formatDate(c.time)}</div>
         <div className="col-sha">{isWip ? '' : c.sha.slice(0, 7)}</div>
       </div>
@@ -347,16 +335,12 @@ export function CommitGraph(props: Props) {
   return (
     <div className="graph">
       <div className="graph-header">
-        <div className="col-refs" style={{ width: refW }}>
-          BRANCH / TAG
-          <span className="col-resize" onMouseDown={onRefResize} />
-        </div>
         <div className="col-graph" style={{ width: graphW }}>
-          GRAPH
+          Graph
         </div>
-        <div className="col-msg">COMMIT MESSAGE</div>
-        <div className="col-author">AUTHOR</div>
-        <div className="col-date">DATE</div>
+        <div className="col-msg">Commit</div>
+        <div className="col-author">Author</div>
+        <div className="col-date">Date</div>
         <div className="col-sha">SHA</div>
         {findOpen && (
           <div className="find-bar" onMouseDown={(e) => e.stopPropagation()}>
@@ -444,8 +428,8 @@ function RefPill({
   const drag = primary ? refDragProps(primary, onDrop) : {};
   return (
     <span
-      className={`ref-pill${pill.isHead ? ' head' : ''}`}
-      style={{ borderColor: color, background: `color-mix(in srgb, ${color} 28%, var(--bg-graph))` }}
+      className={`ref-pill${pill.isHead ? ' head' : ''}${pill.tag ? ' tag' : ''}`}
+      style={{ ['--tag' as string]: color }}
       title={[pill.local && `Local: ${pill.local.name}`, ...pill.remotes.map((r) => `Remote: ${r.name}`), pill.tag && `Tag: ${pill.tag.name}`]
         .filter(Boolean)
         .join('\n')}
@@ -460,11 +444,10 @@ function RefPill({
       }}
       {...drag}
     >
-      {pill.isHead && pill.local && <Check size={12} className="pill-check" />}
+      {pill.isHead && pill.local && <Check size={11} className="pill-check" />}
+      {pill.tag && <Tag size={11} className="pill-icon" />}
       <span className="pill-label">{pill.label}</span>
-      {pill.local && <Laptop size={12} className="pill-icon" />}
-      {pill.remotes.length > 0 && <Cloud size={12} className="pill-icon" />}
-      {pill.tag && <Tag size={12} className="pill-icon" />}
+      {pill.local && pill.remotes.length > 0 && <Cloud size={11} className="pill-icon" />}
     </span>
   );
 }

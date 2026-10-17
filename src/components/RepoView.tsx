@@ -20,7 +20,7 @@ import type {
 } from '../types';
 import { WIP } from '../types';
 import { api, basename, cleanError, git, joinPath } from '../api';
-import { computeGraph } from '../lib/graph';
+import { computeGraph, laneColor } from '../lib/graph';
 import { parseTrack } from '../lib/format';
 import { Splitter, useUI, type MenuItem } from './ui';
 import { Toolbar, PULL_LABELS, type PullMode } from './Toolbar';
@@ -297,6 +297,13 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     const { rows, maxLanes } = computeGraph(list, trunk && showWip && info?.head === trunk ? WIP : trunk);
     return { items: list.map((commit, i) => ({ commit, graph: rows[i] })), maxLanes };
   }, [commits, showWip, info?.head, trunk]);
+
+  // Each commit's lane color, so sidebar branches match their line in the graph.
+  const laneColors = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const { commit, graph: g } of graph.items) m.set(commit.sha, laneColor(g.afterColors[g.col] ?? g.beforeColors[g.col] ?? g.col));
+    return m;
+  }, [graph]);
 
   const refsBySha = useMemo(() => {
     const m = new Map<string, Ref[]>();
@@ -1324,6 +1331,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
             stashes={stashes}
             remotes={info?.remotes ?? []}
             filter={graphFilter}
+            laneColors={laneColors}
             prs={prs}
             gh={gh}
             onPrClick={selectPr}

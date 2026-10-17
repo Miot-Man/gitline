@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Laptop, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair, CloudOff, GitPullRequest, GitPullRequestDraft, Eraser, RefreshCw, FolderTree, Package, HardDrive, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair, CloudOff, GitPullRequest, GitPullRequestDraft, Eraser, RefreshCw, FolderTree, Package, HardDrive, AlertTriangle } from 'lucide-react';
 import type { GhStatus, GraphFilter, LfsInfo, PullRequest, Ref, Stash, Submodule, Worktree } from '../types';
 import { parseTrack } from '../lib/format';
 
@@ -8,6 +8,7 @@ interface Props {
   stashes: Stash[];
   remotes: string[];
   filter: GraphFilter;
+  laneColors: Map<string, string>;
   prs: PullRequest[];
   gh: GhStatus | null;
   onPrClick: (pr: PullRequest) => void;
@@ -341,7 +342,8 @@ export function refDragProps(r: Ref, onDrop: (e: React.DragEvent, sourceFull: st
   };
 }
 
-function RefRow({ r, depth, icon, filter, prs, onSelectSha, onRefMenu, onRefDoubleClick, onRefDrop }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
+function RefRow({ r, depth, icon, filter, laneColors, prs, onSelectSha, onRefMenu, onRefDoubleClick, onRefDrop }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
+  const lane = laneColors.get(r.sha);
   const t = parseTrack(r.track);
   const branch = r.type === 'remote' ? r.name.split('/').slice(1).join('/') : r.name;
   const pr = prs.find((p) => !p.fork && p.head === branch);
@@ -358,7 +360,11 @@ function RefRow({ r, depth, icon, filter, prs, onSelectSha, onRefMenu, onRefDoub
       title={t.gone ? `${r.name}: its remote branch ${r.upstream} was deleted` : r.upstream ? `${r.name} → ${r.upstream}` : r.name}
       {...refDragProps(r, onRefDrop)}
     >
-      {r.isHead ? <Check size={13} className="side-icon head-icon" /> : icon === 'local' ? <Laptop size={13} className="side-icon" /> : <Cloud size={13} className="side-icon" />}
+      {icon === 'remote' ? (
+        <Cloud size={13} className="side-icon" style={lane ? { color: lane } : undefined} />
+      ) : (
+        <span className={`lane-dot${r.isHead ? ' head' : ''}`} style={{ ['--tag' as string]: lane ?? 'var(--muted)' }} />
+      )}
       <span className="side-label">{label}</span>
       {pr && (
         <span className="pr-badge" title={`#${pr.number} ${pr.title}`}>

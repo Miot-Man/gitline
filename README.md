@@ -8,7 +8,9 @@ Download the installer for your OS from the [Releases](https://github.com/Miot-M
 
 - **macOS:** `.dmg`. The app isn't code-signed yet, so the first time, right-click Gitline → Open.
 - **Windows:** `.exe` installer. SmartScreen may warn because it's unsigned: More info → Run anyway.
-- **Linux:** `.AppImage` (make it executable and run it) or `.deb`.
+- **Fedora:** `sudo dnf install ./Gitline-*.rpm`
+- **Arch:** `sudo pacman -U Gitline-*.pacman`
+- **Any Linux:** the `.AppImage`: make it executable (`chmod +x`) and run it.
 
 Requires `git`. GitHub pull requests need the [GitHub CLI](https://cli.github.com) signed in with `gh auth login`.
 

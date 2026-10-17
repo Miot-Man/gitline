@@ -69,16 +69,16 @@ export function computeGraph(commits: { sha: string; parents: string[] }[], trun
 }
 
 export const LANE_COLORS = [
-  '#15a0bf',
-  '#0669f7',
-  '#8e00c2',
-  '#c517b6',
-  '#d90171',
-  '#cd0101',
-  '#f25d2e',
-  '#f2ca33',
-  '#7bd938',
-  '#2ece9d',
+  '#2ec4b6',
+  '#f4a259',
+  '#a594f9',
+  '#4f8cff',
+  '#e86a92',
+  '#7bd389',
+  '#e3c35a',
+  '#5bc0eb',
+  '#ff8c61',
+  '#c792ea',
 ];
 
 // Color 0 is reserved for the first line drawn so side branches never blend into it.

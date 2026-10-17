@@ -1,38 +1,38 @@
 :root {
-  --bg: #1b1d23;
-  --bg-graph: #1e2128;
-  --bg-panel: #24272f;
-  --bg-panel-2: #2a2e37;
-  --bg-toolbar: #2b2f38;
-  --bg-tabbar: #16181d;
-  --bg-hover: #2f3440;
-  --bg-active: #364052;
-  --bg-input: #1a1c22;
-  --bg-avatar: #2c303a;
-  --border: #353a45;
-  --border-soft: #2c3039;
-  --text: #d7dae0;
-  --text-strong: #f2f4f7;
-  --muted: #8a909c;
-  --accent: #1ab6a6;
-  --accent-strong: #15998b;
-  --green: #3fb34f;
-  --green-strong: #33983f;
-  --red: #e5484d;
-  --yellow: #e2b93d;
-  --blue: #3c8ef0;
-  --orange: #f0883e;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, Helvetica, Arial, sans-serif;
-  --mono: 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  --scrollbar: #3b404c;
-  --scrollbar-hover: #4a505e;
+  --bg: #0e1114;
+  --bg-graph: #13171b;
+  --bg-panel: #161a1f;
+  --bg-panel-2: #1c2127;
+  --bg-toolbar: #161a1f;
+  --bg-tabbar: #0b0d10;
+  --bg-hover: #20262d;
+  --bg-active: #1d3836;
+  --bg-input: #0f1215;
+  --bg-avatar: #1c2127;
+  --border: #2a3138;
+  --border-soft: #20262c;
+  --text: #dfe3e7;
+  --text-strong: #f5f7f9;
+  --muted: #8b949e;
+  --accent: #2ec4b6;
+  --accent-strong: #22a597;
+  --green: #4cc38a;
+  --green-strong: #3aa874;
+  --red: #ef6f6c;
+  --yellow: #e3b341;
+  --blue: #4f8cff;
+  --orange: #f4a259;
+  --font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', 'Cantarell', sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+  --scrollbar: #2f363e;
+  --scrollbar-hover: #3d454e;
   --red-strong: #c93a3f;
   --red-text: #ff8a8d;
   --green-text: #8be28f;
-  --bg-tab-hover: #1f2228;
-  --bg-menu: #2d313b;
-  --border-menu: #424857;
-  --divider: #14161a;
+  --bg-tab-hover: #14181c;
+  --bg-menu: #1c2127;
+  --border-menu: #2f363e;
+  --divider: #0a0c0e;
   --row-hover: rgba(255, 255, 255, 0.035);
   --ln: #5d6370;
   --ln-bg: rgba(0, 0, 0, 0.12);
@@ -47,7 +47,7 @@
   --diff-empty: rgba(0, 0, 0, 0.18);
   --ours: #9ecbff;
   --theirs: #ffc58f;
-  --welcome-glow: #242a34;
+  --welcome-glow: #16211f;
   --shadow: rgba(0, 0, 0, 0.4);
   --shadow-strong: rgba(0, 0, 0, 0.5);
   --backdrop: rgba(0, 0, 0, 0.5);
@@ -146,7 +146,7 @@ select {
   color: var(--text);
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 2px;
   padding: 6px 8px;
   outline: none;
   user-select: text;
@@ -169,7 +169,7 @@ pre {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar);
-  border-radius: 6px;
+  border-radius: 2px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -214,7 +214,7 @@ pre {
   justify-content: center;
   gap: 6px;
   padding: 6px 14px;
-  border-radius: 4px;
+  border-radius: 2px;
   border: 1px solid var(--border);
   background: var(--bg-panel-2);
   cursor: pointer;
@@ -274,7 +274,7 @@ pre {
 .btn-xs {
   padding: 2px 8px;
   font-size: 11px;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .icon-btn {
@@ -283,7 +283,7 @@ pre {
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 2px;
   padding: 3px;
   color: var(--muted);
   cursor: pointer;
@@ -324,7 +324,7 @@ pre {
   min-width: 120px;
   max-width: 220px;
   padding: 0 8px 0 12px;
-  border-radius: 6px 6px 0 0;
+  border-radius: 0;
   color: var(--muted);
   cursor: default;
   background: transparent;
@@ -348,7 +348,7 @@ pre {
   border: none;
   background: transparent;
   color: var(--muted);
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 2px;
   opacity: 0;
   cursor: pointer;
@@ -369,7 +369,7 @@ pre {
   background: transparent;
   color: var(--muted);
   padding: 5px;
-  border-radius: 4px;
+  border-radius: 2px;
   cursor: pointer;
 }
 .tab-new:hover {
@@ -425,7 +425,7 @@ pre {
   border: none;
   background: transparent;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
   cursor: pointer;
   min-width: 0;
 }
@@ -463,7 +463,7 @@ pre {
   padding: 5px 8px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: 2px;
   color: var(--text);
   cursor: pointer;
 }
@@ -485,7 +485,7 @@ pre {
   right: -12px;
   min-width: 16px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--accent);
   color: #fff;
   font-size: 10px;
@@ -514,7 +514,7 @@ pre {
   background: transparent;
   color: var(--muted);
   padding: 14px 3px;
-  border-radius: 4px;
+  border-radius: 2px;
   cursor: pointer;
 }
 .split-caret:hover:not(:disabled) {
@@ -591,7 +591,7 @@ pre {
   padding: 0 8px;
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 2px;
   color: var(--muted);
 }
 .side-filter input {
@@ -626,7 +626,7 @@ pre {
 .side-count {
   margin-left: 2px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--bg-panel-2);
   font-size: 10px;
   line-height: 16px;
@@ -690,11 +690,11 @@ pre {
   position: relative;
   display: flex;
   align-items: center;
-  height: 28px;
+  height: 30px;
   flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--muted);
   background: var(--bg-panel);
   border-bottom: 1px solid var(--divider);
@@ -723,7 +723,7 @@ pre {
   position: absolute;
   left: 0;
   right: 0;
-  height: 32px;
+  height: 34px;
   display: flex;
   align-items: center;
   cursor: default;
@@ -732,7 +732,8 @@ pre {
   background: var(--row-hover);
 }
 .graph-row.selected {
-  background: color-mix(in srgb, var(--lane) 22%, transparent);
+  background: color-mix(in srgb, var(--lane) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--lane);
 }
 .graph-row.selected .col-msg {
   color: var(--text-strong);
@@ -764,16 +765,44 @@ pre {
   flex: 1;
   min-width: 160px;
   padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
+  overflow: hidden;
+}
+.msg-subject {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.graph-header .col-msg,
+.graph-header .col-graph {
+  display: block;
+}
 .col-author {
-  width: 140px;
+  width: 150px;
   flex-shrink: 0;
   padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+}
+.author-dot {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+}
+.row-author {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -819,51 +848,52 @@ pre {
   font-family: var(--font);
 }
 .ref-pill {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 100%;
-  height: 20px;
+  max-width: 220px;
+  height: 18px;
   padding: 0 6px;
-  border: 1px solid;
-  border-radius: 4px;
-  color: var(--text-strong);
-  font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--tag) 45%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--tag) 14%, transparent);
+  color: var(--tag);
+  font-family: var(--mono);
+  font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
-  flex-shrink: 1;
-  min-width: 0;
   cursor: pointer;
 }
 .ref-pill.head {
-  font-weight: 700;
+  background: var(--tag);
+  border-color: var(--tag);
+  color: var(--bg);
+  font-weight: 500;
+}
+.ref-pill.tag {
+  background: transparent;
+  border: 1px dashed var(--muted);
+  color: var(--text);
 }
 .pill-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pill-icon {
-  flex-shrink: 0;
-  opacity: 0.8;
-}
+.pill-icon,
 .pill-check {
   flex-shrink: 0;
 }
 .pill-more {
-  flex-shrink: 0;
-  height: 20px;
+  flex: none;
+  height: 18px;
   padding: 0 5px;
-  border: 1px solid;
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 18px;
-  color: var(--text);
-}
-.ref-line {
-  flex: 1;
-  min-width: 4px;
-  border-top: 2px solid;
-  opacity: 0.7;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--muted);
 }
 .wip-msg {
   display: inline-flex;
@@ -908,7 +938,7 @@ pre {
   padding: 4px 6px 4px 10px;
   background: var(--bg-panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 2px;
   box-shadow: 0 6px 20px var(--shadow);
   letter-spacing: normal;
   font-weight: normal;
@@ -1058,7 +1088,7 @@ pre {
 .state-banner {
   margin: 8px;
   padding: 10px 12px;
-  border-radius: 6px;
+  border-radius: 2px;
   background: color-mix(in srgb, var(--orange) 14%, var(--bg-panel));
   border: 1px solid color-mix(in srgb, var(--orange) 50%, transparent);
 }
@@ -1259,7 +1289,7 @@ pre {
   font-weight: 700;
   text-transform: uppercase;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 .diff-badge.staged {
   background: color-mix(in srgb, var(--green) 25%, transparent);
@@ -1272,7 +1302,7 @@ pre {
 .seg {
   display: flex;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 2px;
   overflow: hidden;
   margin-right: 4px;
 }
@@ -1306,7 +1336,7 @@ pre {
 .hunk {
   margin-bottom: 14px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 .hunk-header {
@@ -1440,7 +1470,7 @@ td.dl-del .sign {
   align-items: center;
   gap: 8px;
   padding: 26px 16px;
-  border-radius: 8px;
+  border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--bg-panel);
   cursor: pointer;
@@ -1477,7 +1507,7 @@ td.dl-del .sign {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 2px;
   cursor: pointer;
 }
 .recent-item:hover {
@@ -1510,7 +1540,7 @@ td.dl-del .sign {
   max-width: 520px;
   margin: 0 auto;
   padding: 22px;
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
 }
@@ -1553,7 +1583,7 @@ td.dl-del .sign {
   padding: 4px;
   background: var(--bg-menu);
   border: 1px solid var(--border-menu);
-  border-radius: 6px;
+  border-radius: 2px;
   box-shadow: 0 10px 30px var(--shadow-strong);
 }
 .menu-item {
@@ -1564,7 +1594,7 @@ td.dl-del .sign {
   padding: 6px 10px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: 2px;
   text-align: left;
   cursor: pointer;
   white-space: pre;
@@ -1612,7 +1642,7 @@ td.dl-del .sign {
   width: 440px;
   max-width: calc(100% - 40px);
   padding: 18px;
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   box-shadow: 0 20px 60px var(--shadow-strong);
@@ -1648,7 +1678,7 @@ td.dl-del .sign {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 10px 10px 12px;
-  border-radius: 6px;
+  border-radius: 2px;
   background: var(--bg-menu);
   border: 1px solid var(--border-menu);
   border-left: 4px solid var(--blue);
@@ -1698,7 +1728,7 @@ td.dl-del .sign {
   width: 600px;
   max-width: calc(100% - 40px);
   max-height: 60vh;
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   box-shadow: 0 20px 60px var(--shadow-strong);
@@ -1733,7 +1763,7 @@ td.dl-del .sign {
   width: 100%;
   padding: 7px 10px;
   border: none;
-  border-radius: 4px;
+  border-radius: 2px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -1916,7 +1946,7 @@ td.dl-del .sign {
 kbd {
   padding: 0 4px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 2px;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--text);
@@ -1926,7 +1956,7 @@ kbd {
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 .rebase-row {
   padding: 6px 8px;
@@ -2086,7 +2116,7 @@ kbd {
 .conflict-card {
   border: 1px solid var(--border);
   border-left: 3px solid var(--orange);
-  border-radius: 6px;
+  border-radius: 2px;
   background: var(--bg-panel);
 }
 .conflict-card.done {
@@ -2216,7 +2246,7 @@ kbd {
   flex: none;
   margin-left: auto;
   padding: 0 5px;
-  border-radius: 8px;
+  border-radius: 3px;
   font-size: 10px;
   color: var(--green);
   border: 1px solid color-mix(in srgb, var(--green) 50%, transparent);
@@ -2252,7 +2282,7 @@ kbd {
   align-items: center;
   gap: 2px;
   padding: 1px 2px 1px 8px;
-  border-radius: 10px;
+  border-radius: 3px;
   background: var(--bg-panel-2);
   border: 1px solid var(--border);
 }
@@ -2298,7 +2328,7 @@ kbd {
   margin-bottom: 8px;
   padding: 6px 8px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: 2px;
   border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent);
   background: color-mix(in srgb, var(--yellow) 12%, transparent);
 }
@@ -2328,7 +2358,7 @@ kbd {
   min-height: 160px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 2px;
   /* checkerboard so transparent pixels are visible */
   background: repeating-conic-gradient(var(--bg-panel-2) 0% 25%, var(--bg-panel) 0% 50%) 50% / 16px 16px;
 }
@@ -2371,4 +2401,24 @@ kbd {
 }
 .conflict-card-header .seg {
   flex-wrap: wrap;
+}
+
+/* Sidebar branch markers in their graph lane color: filled for the checked-out branch. */
+.lane-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 2px 0 1px;
+  border-radius: 50%;
+  border: 2.5px solid var(--tag);
+  box-sizing: border-box;
+}
+.lane-dot.head {
+  background: var(--tag);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tag) 30%, transparent);
+}
+
+/* Lane colors are tuned for dark backgrounds; darken tag text so it stays readable on white. */
+:root[data-theme='light'] .ref-pill:not(.head):not(.tag) {
+  color: color-mix(in srgb, var(--tag) 60%, #000);
 }
