@@ -335,9 +335,7 @@ export function CommitGraph(props: Props) {
   return (
     <div className="graph">
       <div className="graph-header">
-        <div className="col-graph" style={{ width: graphW }}>
-          Graph
-        </div>
+        <div className="col-graph" style={{ width: graphW }} />
         <div className="col-msg">Commit</div>
         <div className="col-author">Author</div>
         <div className="col-date">Date</div>
