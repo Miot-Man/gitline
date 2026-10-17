@@ -347,7 +347,9 @@ describe('identity per folder', () => {
 
       await ops.saveIdentityRules('', [{ folder: uni, name: 'Ada Park', email: 'a1234567@uni.example' }]);
       const rules = await ops.identityRules();
-      expect(rules.filter((r: { managed: boolean }) => r.managed)).toMatchObject([{ folder: uni, name: 'Ada Park', email: 'a1234567@uni.example' }]);
+      // Folders are stored with forward slashes (what git's includeIf expects on every OS).
+      const slashes = (p: string) => p.replace(/\\/g, '/');
+      expect(rules.filter((r: { managed: boolean }) => r.managed)).toMatchObject([{ folder: slashes(uni), name: 'Ada Park', email: 'a1234567@uni.example' }]);
       expect(rules.some((r: { managed: boolean; folder: string }) => !r.managed && r.folder === '/elsewhere')).toBe(true);
 
       const id = await ops.effectiveIdentity(dir);

@@ -11,8 +11,9 @@ export const { ops } = require('../electron/git.cjs') as { ops: Record<string, (
 const made: string[] = [];
 
 export function tmpDir(prefix = 'gitline-test-') {
-  // realpath: macOS reports /private/var for /var, and git prints the real path.
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // Real path, as git sees it: macOS reports /private/var for /var, and Windows temp folders can come back
+  // as 8.3 short names (RUNNER~1) that git resolves to the long form.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   made.push(dir);
   return dir;
 }

@@ -82,9 +82,12 @@ function gh(cwd, args) {
   });
 }
 
-// Reads `git bisect` output: either the first bad commit, or how much is left to test.
-function parseBisect(out) {
-  const found = out.match(/^([0-9a-f]{40}) is the first bad commit/m);
+// Where a bisect stands after a step. The finished state comes from `git bisect log`, which records
+// "# first bad commit: [sha] ..." the same way across git versions; the console wording has changed.
+async function bisectResult(cwd, r) {
+  const out = `${r.stdout}\n${r.stderr}`;
+  const log = (await git(cwd, ['bisect', 'log'], { allowFail: true })).stdout;
+  const found = log.match(/^# first bad commit: \[([0-9a-f]{40})\]/m) ?? out.match(/([0-9a-f]{40}) is the first bad commit/);
   if (found) return { done: true, firstBad: found[1] };
   if (/only 'skip'ped commits left/.test(out)) return { done: true, firstBad: null, message: "Couldn't narrow it down: only skipped commits are left." };
   const left = out.match(/Bisecting: (\d+) revisions? left to test after this \(roughly (\d+) steps?\)/);
@@ -543,11 +546,11 @@ const ops = {
   async bisectStart(cwd, bad, good) {
     await git(cwd, ['bisect', 'start']);
     await git(cwd, ['bisect', 'bad', bad]);
-    return parseBisect((await git(cwd, ['bisect', 'good', good])).stdout);
+    return bisectResult(cwd, await git(cwd, ['bisect', 'good', good]));
   },
   // `verdict` is good, bad or skip; `sha` defaults to the commit being tested.
   async bisectMark(cwd, verdict, sha) {
-    return parseBisect((await git(cwd, ['bisect', verdict, ...(sha ? [sha] : [])])).stdout);
+    return bisectResult(cwd, await git(cwd, ['bisect', verdict, ...(sha ? [sha] : [])]));
   },
   async bisectReset(cwd) {
     await git(cwd, ['bisect', 'reset']);
