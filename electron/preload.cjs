@@ -27,4 +27,11 @@ contextBridge.exposeInMainWorld('api', {
   onMenu: (cb) => on('menu', cb),
   onFocus: (cb) => on('focus', cb),
   setTheme: (theme) => ipcRenderer.invoke('theme:set', theme),
+  updates: {
+    check: () => ipcRenderer.invoke('update:check'),
+    state: () => ipcRenderer.invoke('update:state'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onChange: (cb) => on('update', cb),
+  },
+  version: () => ipcRenderer.invoke('app:version'),
 });

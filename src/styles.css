@@ -2681,3 +2681,368 @@ kbd {
 .menu-item:hover .menu-icon {
   color: inherit;
 }
+
+/* ---------- diff: word changes, whitespace toggle, syntax colours ---------- */
+.diff-table .wd {
+  border-radius: 2px;
+}
+.diff-table .dl-add .wd,
+.diff-table td.dl-add .wd {
+  background: color-mix(in srgb, var(--green) 38%, transparent);
+}
+.diff-table .dl-del .wd,
+.diff-table td.dl-del .wd {
+  background: color-mix(in srgb, var(--red) 38%, transparent);
+}
+.ws-toggle.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+:root {
+  --syn-keyword: #c792ea;
+  --syn-string: #6cb6ff;
+  --syn-number: #f4a259;
+  --syn-comment: #6e7781;
+  --syn-func: #82aaff;
+  --syn-type: #ffcb6b;
+  --syn-attr: #80cbc4;
+}
+:root[data-theme='light'] {
+  --syn-keyword: #8a3fb5;
+  --syn-string: #0a5cad;
+  --syn-number: #b5530e;
+  --syn-comment: #8a8f98;
+  --syn-func: #1f5fbf;
+  --syn-type: #9a6a00;
+  --syn-attr: #00796b;
+}
+.hljs-keyword,
+.hljs-built_in,
+.hljs-selector-tag,
+.hljs-literal {
+  color: var(--syn-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-template-tag,
+.hljs-addition {
+  color: var(--syn-string);
+}
+.hljs-number,
+.hljs-variable.constant_ {
+  color: var(--syn-number);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--syn-func);
+}
+.hljs-type,
+.hljs-title.class_,
+.hljs-class .hljs-title {
+  color: var(--syn-type);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-name,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--syn-attr);
+}
+
+.status-link.update {
+  color: var(--accent);
+  font-weight: 500;
+}
+.status-update {
+  color: var(--muted);
+}
+
+/* GitHub Actions result for a commit. */
+.ci-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.ci-dot.success {
+  background: var(--green);
+}
+.ci-dot.failure {
+  background: var(--red);
+}
+.ci-dot.pending {
+  background: var(--yellow);
+  animation: ci-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ci-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Clone: the signed-in user's GitHub repositories. */
+.gh-repo-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+.gh-repo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.gh-repo:hover {
+  background: var(--bg-hover);
+}
+.gh-repo.active {
+  background: var(--bg-active);
+}
+.gh-repo-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-strong);
+}
+.gh-repo-private {
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--muted);
+}
+.gh-repo-desc {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stash-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  border-bottom: 1px solid var(--border-soft);
+}
+.stash-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Recover lost commits */
+.recover-modal {
+  width: 680px;
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+.recover-help {
+  margin: -4px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.recover-list {
+  flex: 1;
+  min-height: 120px;
+  margin-top: 10px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+}
+.recover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.recover-main {
+  flex: 1;
+  min-width: 0;
+}
+.recover-subject {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.recover-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lost-badge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--orange) 60%, transparent);
+  border-radius: 2px;
+  color: var(--orange);
+  font-size: 10px;
+}
+
+.identity-rule {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+}
+.identity-rule .field-row,
+.identity-rule .settings-row {
+  width: 100%;
+}
+.identity-rule input {
+  flex: 1;
+  min-width: 0;
+}
+.settings-hint {
+  margin: -2px 0 10px;
+}
+.add-rule {
+  margin-bottom: 14px;
+}
+
+/* Keyboard shortcuts */
+.shortcuts-modal {
+  width: 720px;
+  max-height: 84vh;
+  overflow-y: auto;
+}
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 28px;
+}
+.shortcuts-grid h3 {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.shortcuts-grid dl {
+  margin: 0;
+}
+.shortcut-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+}
+.shortcut-row dt {
+  flex: none;
+  width: 120px;
+}
+.shortcut-row dd {
+  margin: 0;
+  color: var(--text);
+}
+
+/* .gitignore editor */
+.gitignore-modal {
+  width: 640px;
+}
+.gitignore-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.gitignore-text {
+  width: 100%;
+  min-height: 300px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  resize: vertical;
+}
+
+/* git bisect */
+.bisect-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--blue) 14%, var(--bg-graph));
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.bisect-banner.done {
+  background: color-mix(in srgb, var(--red) 14%, var(--bg-graph));
+}
+.bisect-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.lang-picker {
+  max-width: 150px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.lang-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.lang-rule input {
+  width: 160px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.lang-rule select {
+  flex: 1;
+  min-width: 0;
+}
+.hljs-strong {
+  font-weight: 700;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-formula,
+.hljs-code {
+  color: var(--syn-string);
+}
+.hljs-link,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--syn-attr);
+}
+.hljs-variable {
+  color: var(--syn-func);
+}

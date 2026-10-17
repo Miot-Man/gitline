@@ -195,3 +195,89 @@ test('branch selector lists remote branches and checks them out', async ({ gl })
   await expect(page.locator('.trail-branch', { hasText: 'feature/remote-only' })).toBeVisible();
   expect(gl.git('rev-parse', '--abbrev-ref', '@{u}')).toBe('origin/feature/remote-only');
 });
+
+test('diffs highlight syntax and changed words, and can ignore whitespace', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('main.c', 'int speed = 100;\nint turn = 35;\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  await gl.open();
+  gl.write('main.c', 'int speed = 120;\n    int turn = 35;\n');
+
+  await row(page, 'uncommitted change').click();
+  await page.locator('.staging .file-row', { hasText: 'main.c' }).locator('.file-name').click();
+  await expect(page.locator('.diff-table .hljs-type, .diff-table .hljs-keyword').first()).toBeVisible();
+  await expect(page.locator('.diff-table .dl-add .wd', { hasText: '120' })).toBeVisible();
+  await expect(page.locator('.diff-table .dl-add', { hasText: 'int turn = 35;' })).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Ignore whitespace' }).click();
+  await expect(page.locator('.diff-table .dl-add', { hasText: 'int turn = 35;' })).toHaveCount(0);
+  await expect(page.locator('.diff-table .dl-add', { hasText: '120' })).toHaveCount(1);
+  // Hunk staging is off while whitespace is ignored.
+  await expect(page.getByRole('button', { name: 'Stage Hunk' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Ignore whitespace' }).click();
+  await expect(page.getByRole('button', { name: 'Stage Hunk' })).toHaveCount(1);
+});
+
+test('bisect walks to the first bad commit', async ({ gl }) => {
+  const { page } = gl;
+  for (let i = 1; i <= 6; i++) {
+    gl.write('speed.txt', i >= 4 ? `broken ${i}\n` : `ok ${i}\n`);
+    gl.git('add', '.');
+    gl.git('commit', '-qm', `Step ${i}`);
+  }
+  await gl.open();
+
+  await row(page, 'Step 1').click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Bisect: this commit was good' }).click();
+  const banner = page.locator('.bisect-banner');
+  await expect(banner).toContainText('Bisecting');
+  for (let n = 0; n < 6; n++) {
+    if (await banner.locator('text=First bad commit').count()) break;
+    const broken = gl.read('speed.txt').startsWith('broken');
+    await banner.getByRole('button', { name: broken ? 'Bad' : 'Good', exact: true }).click();
+    await page.waitForTimeout(300);
+  }
+  await expect(banner).toContainText('First bad commit');
+  await expect(banner).toContainText('Step 4');
+  await banner.getByRole('button', { name: 'Finish' }).click();
+  await expect(banner).toHaveCount(0);
+  expect(gl.git('symbolic-ref', '--short', 'HEAD')).toBe('main');
+});
+
+test('shortcuts list and .gitignore editor', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', 'a\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  await gl.open();
+
+  await gl.menu('shortcuts');
+  await expect(page.locator('.shortcuts-modal')).toContainText('Search and run commands');
+  await page.getByRole('button', { name: 'Done' }).click();
+
+  await gl.menu('palette');
+  await page.locator('.palette input').fill('gitignore');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '+ Node' }).click();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => gl.read('.gitignore')).toContain('node_modules/');
+});
+
+test('picking a language in a diff remembers it for that file type', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('game.p8', 'x = 1\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  await gl.open();
+  gl.write('game.p8', 'local x = 2\n');
+
+  await row(page, 'uncommitted change').click();
+  await page.locator('.staging .file-row', { hasText: 'game.p8' }).locator('.file-name').click();
+  const picker = page.getByRole('combobox', { name: 'Syntax highlighting language' });
+  await expect(picker).toHaveValue('none');
+  await picker.selectOption('lua');
+  await expect(page.locator('.diff-table .hljs-keyword', { hasText: 'local' })).toBeVisible();
+  const rules = await page.evaluate(() => JSON.parse(localStorage.getItem('settings') ?? '{}').syntaxRules);
+  expect(rules).toEqual([{ pattern: '.p8', language: 'lua' }]);
+});

@@ -5,6 +5,9 @@ import { git } from '../api';
 import { buildLinePatch, parseDiff, type DiffLine, type Hunk } from '../lib/diff';
 import { StatusIcon } from './RightPanel';
 import { IMAGE_EXT, ImageDiff, type ImageSide } from './ImageDiff';
+import { LANGUAGES, PLAIN, guessLanguage, highlightLines, isLoaded, languageFor, loadLanguage, markRanges, patternFor } from '../lib/highlight';
+import { saveSettings, useSettings } from '../lib/settings';
+import { changedRanges, pairWordDiffs } from '../lib/wordDiff';
 
 interface Props {
   repo: string;
@@ -25,6 +28,7 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [split, setSplit] = useState(() => localStorage.getItem('diffSplit') === '1');
+  const [ignoreWs, setIgnoreWs] = useState(() => localStorage.getItem('diffIgnoreWs') === '1');
   // Selected +/- lines for line-level staging; only one hunk at a time.
   const [sel, setSel] = useState<{ hunk: number; lines: Set<number>; anchor: number } | null>(null);
   const file = target.file;
@@ -34,13 +38,13 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
     setError(null);
     const p =
       target.kind === 'wip'
-        ? git<string>('diffWorking', repo, file.path, target.staged, file.status === '?', target.staged ? file.oldPath : undefined)
-        : git<string>('diffCommit', repo, target.sha, file.path, file.oldPath, target.parent);
+        ? git<string>('diffWorking', repo, file.path, target.staged, file.status === '?', target.staged ? file.oldPath : undefined, ignoreWs)
+        : git<string>('diffCommit', repo, target.sha, file.path, file.oldPath, target.parent, ignoreWs);
     p.then((t) => alive && setText(t)).catch((e) => alive && setError(e.message));
     return () => {
       alive = false;
     };
-  }, [repo, target, version, file]);
+  }, [repo, target, version, file, ignoreWs]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -55,7 +59,24 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
   const isWip = target.kind === 'wip';
   const staged = isWip && target.staged;
   const untracked = file.status === '?';
-  const hunkActions = isWip && !untracked && file.status !== 'U' && parsed && !parsed.combined && !parsed.binary;
+  // A whitespace-blind diff doesn't match the file, so its hunks can't be staged or discarded.
+  const hunkActions = isWip && !untracked && file.status !== 'U' && !ignoreWs && parsed && !parsed.combined && !parsed.binary;
+  // Language for this file: the user's choice for its type, else Gitline's guess. Loaded on first use.
+  const { syntaxHighlighting, syntaxRules } = useSettings();
+  const chosen = syntaxHighlighting ? languageFor(file.path, syntaxRules) : null;
+  const [, setLoaded] = useState(0);
+  useEffect(() => {
+    if (chosen && !isLoaded(chosen)) loadLanguage(chosen).then(() => setLoaded((n) => n + 1));
+  }, [chosen]);
+  const lang = chosen && isLoaded(chosen) ? chosen : null;
+
+  // Picking a language remembers it for every file of this type; picking Gitline's own guess forgets the choice.
+  const pickLanguage = (id: string) => {
+    const pattern = patternFor(file.path);
+    const others = syntaxRules.filter((r) => r.pattern.toLowerCase() !== pattern.toLowerCase());
+    const guess = guessLanguage(file.path) ?? PLAIN;
+    saveSettings({ syntaxRules: id === guess ? others : [...others, { pattern, language: id }] });
+  };
   const totalLines = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.length, 0) : 0;
   const added = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.filter((l) => l.type === 'add').length, 0) : 0;
   const removed = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.filter((l) => l.type === 'del').length, 0) : 0;
@@ -86,6 +107,13 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
     setSel(null);
   };
 
+  const toggleIgnoreWs = () => {
+    setIgnoreWs((v) => {
+      localStorage.setItem('diffIgnoreWs', v ? '0' : '1');
+      return !v;
+    });
+  };
+
   const toggleSplit = () => {
     setSplit((s) => {
       localStorage.setItem('diffSplit', s ? '0' : '1');
@@ -106,6 +134,31 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
         )}
         {isWip && <span className={`diff-badge ${staged ? 'staged' : 'unstaged'}`}>{staged ? 'Staged' : 'Unstaged'}</span>}
         <span className="spacer" />
+        {syntaxHighlighting && !parsed?.binary && (
+          <select
+            className="lang-picker"
+            aria-label="Syntax highlighting language"
+            title={`Language for ${patternFor(file.path)} files (remembered; change in Settings)`}
+            value={chosen ?? PLAIN}
+            onChange={(e) => pickLanguage(e.target.value)}
+          >
+            <option value={PLAIN}>Plain text</option>
+            {LANGUAGES.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+                {l.id === guessLanguage(file.path) ? ' (auto)' : ''}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          className={`btn btn-sm ws-toggle${ignoreWs ? ' on' : ''}`}
+          onClick={toggleIgnoreWs}
+          aria-pressed={ignoreWs}
+          title={ignoreWs ? 'Showing changes without whitespace-only edits (staging hunks is off)' : 'Hide whitespace-only changes'}
+        >
+          Ignore whitespace
+        </button>
         <div className="seg">
           <button className={!split ? 'on' : ''} onClick={() => split && toggleSplit()} title="Unified">
             <Rows3 size={14} />
@@ -195,9 +248,10 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
                 )}
               </div>
               {split ? (
-                <SplitHunk lines={h.lines} />
+                <SplitHunk lines={h.lines} lang={lang} />
               ) : (
                 <UnifiedHunk
+                  lang={lang}
                   lines={h.lines}
                   selected={sel?.hunk === i ? sel.lines : undefined}
                   onSelect={hunkActions ? (line, shift) => selectLine(i, line, shift) : undefined}
@@ -239,7 +293,41 @@ function limitHunks(hunks: Hunk[]) {
 
 const sign = (t: DiffLine['type']) => (t === 'add' ? '+' : t === 'del' ? '-' : ' ');
 
-function UnifiedHunk({ lines, selected, onSelect }: { lines: DiffLine[]; selected?: Set<number>; onSelect?: (line: number, shift: boolean) => void }) {
+// HTML for every line of a hunk. Each side (old: context + removed, new: context + added) is highlighted
+// as one text so docstrings and block comments carry across lines; changed words are marked on top.
+function useHunkHtml(lines: DiffLine[], lang: string | null): string[] {
+  return useMemo(() => {
+    const oldIdx: number[] = [];
+    const newIdx: number[] = [];
+    lines.forEach((l, i) => {
+      if (l.type === 'ctx' || l.type === 'del') oldIdx.push(i);
+      if (l.type === 'ctx' || l.type === 'add') newIdx.push(i);
+    });
+    const html: string[] = lines.map((l) => (l.type === 'meta' ? l.text : ''));
+    const oldHtml = highlightLines(oldIdx.map((i) => lines[i].text), lang);
+    const newHtml = highlightLines(newIdx.map((i) => lines[i].text), lang);
+    oldIdx.forEach((i, k) => (html[i] = oldHtml[k]));
+    newIdx.forEach((i, k) => (html[i] = newHtml[k]));
+    for (const [i, segs] of pairWordDiffs(lines)) html[i] = markRanges(html[i], changedRanges(segs));
+    return html;
+  }, [lines, lang]);
+}
+
+// highlight.js and markRanges escape the source text, so this HTML is safe to insert.
+const Code = ({ html }: { html: string }) => <span dangerouslySetInnerHTML={{ __html: html }} />;
+
+function UnifiedHunk({
+  lines,
+  lang,
+  selected,
+  onSelect,
+}: {
+  lines: DiffLine[];
+  lang: string | null;
+  selected?: Set<number>;
+  onSelect?: (line: number, shift: boolean) => void;
+}) {
+  const html = useHunkHtml(lines, lang);
   return (
     <table className="diff-table">
       <tbody>
@@ -264,7 +352,7 @@ function UnifiedHunk({ lines, selected, onSelect }: { lines: DiffLine[]; selecte
               </td>
               <td className="code">
                 <span className="sign">{sign(l.type)}</span>
-                {l.text}
+                <Code html={html[i]} />
               </td>
             </tr>
           )
@@ -274,7 +362,9 @@ function UnifiedHunk({ lines, selected, onSelect }: { lines: DiffLine[]; selecte
   );
 }
 
-function SplitHunk({ lines }: { lines: DiffLine[] }) {
+function SplitHunk({ lines, lang }: { lines: DiffLine[]; lang: string | null }) {
+  const htmlByIndex = useHunkHtml(lines, lang);
+  const html = useMemo(() => new Map(lines.map((l, i) => [l, htmlByIndex[i]])), [lines, htmlByIndex]);
   const rows: [DiffLine | null, DiffLine | null][] = [];
   let i = 0;
   while (i < lines.length) {
@@ -299,7 +389,7 @@ function SplitHunk({ lines }: { lines: DiffLine[] }) {
       </td>,
       <td key="c" className={`code ${cls}`}>
         {l.type !== 'meta' && <span className="sign">{sign(l.type)}</span>}
-        {l.text}
+        {l.type === 'meta' ? l.text : <Code html={html.get(l) ?? ''} />}
       </td>,
     ];
   };

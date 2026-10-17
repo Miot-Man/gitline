@@ -96,6 +96,13 @@ export function Welcome({ onOpen, mode, setMode }: Props) {
   );
 }
 
+interface GhRepo {
+  name: string;
+  description: string | null;
+  private: boolean;
+  url: string;
+}
+
 const nameFromUrl = (url: string) =>
   url
     .trim()
@@ -113,6 +120,18 @@ function CloneForm({ onDone, onCancel }: { onDone: (p: string) => void; onCancel
   const [busy, setBusy] = useState(false);
 
   const effectiveName = nameTouched ? name : nameFromUrl(url);
+
+  // The signed-in GitHub user's repositories (via gh), so cloning can be a search and a click.
+  const [mine, setMine] = useState<GhRepo[] | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    git<GhRepo[]>('ghMyRepos', '')
+      .then(setMine)
+      .catch((e) => setMineError(cleanError(e)));
+  }, []);
+  const q = query.trim().toLowerCase();
+  const shown = (mine ?? []).filter((r) => !q || r.name.toLowerCase().includes(q) || (r.description ?? '').toLowerCase().includes(q)).slice(0, 50);
 
   const browse = async () => {
     const p = await api.pickFolder('Where to clone to');
@@ -136,6 +155,31 @@ function CloneForm({ onDone, onCancel }: { onDone: (p: string) => void; onCancel
   return (
     <div className="form-card">
       <div className="form-title">Clone a repository</div>
+      {mine && mine.length > 0 && (
+        <div className="field">
+          <span>Your GitHub repositories</span>
+          <input placeholder="Search your repositories" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <div className="gh-repo-list">
+            {shown.map((r) => (
+              <button
+                key={r.name}
+                className={`gh-repo${url === r.url ? ' active' : ''}`}
+                onClick={() => {
+                  setUrl(r.url);
+                  setNameTouched(false);
+                }}
+                title={r.description ?? r.name}
+              >
+                <span className="gh-repo-name">{r.name}</span>
+                {r.private && <span className="gh-repo-private">private</span>}
+                {r.description && <span className="gh-repo-desc">{r.description}</span>}
+              </button>
+            ))}
+            {shown.length === 0 && <div className="side-note">No matches</div>}
+          </div>
+        </div>
+      )}
+      {mineError && <div className="field-hint">Sign in with the GitHub CLI (gh auth login) to pick from your repositories.</div>}
       <label className="field">
         <span>URL</span>
         <input autoFocus placeholder="https://github.com/user/repo.git" value={url} onChange={(e) => setUrl(e.target.value)} />

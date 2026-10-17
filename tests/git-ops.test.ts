@@ -312,3 +312,108 @@ describe('images and config', () => {
     expect(await ops.getConfig(dir, 'user.email')).toBe('test@example.com');
   });
 });
+
+describe('ignore whitespace', () => {
+  it('hides whitespace-only changes when asked', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'f.c', 'int a = 1;\nint b = 2;\n');
+    await commitAll(dir, 'init');
+    write(dir, 'f.c', '  int a = 1;\nint b = 3;\n');
+    const all = await ops.diffWorking(dir, 'f.c', false, false, undefined, false);
+    const noWs = await ops.diffWorking(dir, 'f.c', false, false, undefined, true);
+    expect(all).toContain('+  int a = 1;');
+    expect(noWs).not.toContain('+  int a = 1;');
+    expect(noWs).toContain('+int b = 3;');
+  });
+});
+
+describe('identity per folder', () => {
+  it('commits as the folder rule identity and only manages its own rules', async () => {
+    // Isolate: a throwaway home folder (for the identity files) and global config file.
+    const home = tmpDir();
+    const prevHome = process.env.HOME;
+    const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+    const globalCfg = path.join(home, '.gitconfig');
+    fs.copyFileSync(prevGlobal!, globalCfg);
+    process.env.HOME = home;
+    process.env.GIT_CONFIG_GLOBAL = globalCfg;
+    try {
+      const uni = path.join(home, 'uni');
+      fs.mkdirSync(uni);
+      const dir = path.join(uni, 'robot');
+      await ops.init(dir);
+      // A hand-written rule elsewhere must survive saves untouched.
+      sh(home, 'config', '--file', globalCfg, '--add', 'includeIf.gitdir:/elsewhere/.path', '/elsewhere/id.gitconfig');
+
+      await ops.saveIdentityRules('', [{ folder: uni, name: 'Ada Park', email: 'a1234567@uni.example' }]);
+      const rules = await ops.identityRules();
+      expect(rules.filter((r: { managed: boolean }) => r.managed)).toMatchObject([{ folder: uni, name: 'Ada Park', email: 'a1234567@uni.example' }]);
+      expect(rules.some((r: { managed: boolean; folder: string }) => !r.managed && r.folder === '/elsewhere')).toBe(true);
+
+      const id = await ops.effectiveIdentity(dir);
+      expect(id.email.value).toBe('a1234567@uni.example');
+      expect(id.email.origin).toContain('identities');
+      write(dir, 'f', 'x\n');
+      await commitAll(dir, 'first');
+      expect(sh(dir, 'log', '-1', '--format=%an <%ae>')).toBe('Ada Park <a1234567@uni.example>');
+
+      // Saving an empty list removes Gitline's rule but keeps the hand-written one.
+      await ops.saveIdentityRules('', []);
+      const after = await ops.identityRules();
+      expect(after.map((r: { folder: string }) => r.folder)).toEqual(['/elsewhere']);
+    } finally {
+      process.env.HOME = prevHome;
+      process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+    }
+  });
+});
+
+describe('partial stash and recovery', () => {
+  it('stashes one file or only staged changes, and finds lost commits', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'a', '1\n');
+    write(dir, 'b', '1\n');
+    await commitAll(dir, 'init');
+    write(dir, 'a', '2\n');
+    write(dir, 'b', '2\n');
+    await ops.stash(dir, 'just a', ['a']);
+    expect(read(dir, 'a')).toBe('1\n');
+    expect(read(dir, 'b')).toBe('2\n');
+    await ops.stage(dir, ['b']);
+    write(dir, 'c', 'untracked\n');
+    await ops.stash(dir, undefined, undefined, true);
+    expect(read(dir, 'b')).toBe('1\n');
+    expect(fs.existsSync(path.join(dir, 'c'))).toBe(true);
+    expect((await ops.stashes(dir)).length).toBe(2);
+
+    // A commit dropped by a hard reset shows up as lost in the reflog.
+    fs.rmSync(path.join(dir, 'c'));
+    write(dir, 'a', '3\n');
+    const lostSha = await commitAll(dir, 'about to be lost');
+    await ops.reset(dir, 'HEAD~1', 'hard');
+    const entries = await ops.reflog(dir);
+    const lost = entries.find((e: { sha: string }) => e.sha === lostSha);
+    expect(lost).toMatchObject({ lost: true, subject: 'about to be lost' });
+    expect(entries.find((e: { sha: string }) => e.sha !== lostSha).lost).toBe(false);
+  });
+});
+
+describe('bisect', () => {
+  it('narrows down the first bad commit', async () => {
+    const dir = await tmpRepo();
+    const shas: string[] = [];
+    for (let i = 1; i <= 8; i++) {
+      write(dir, 'speed.txt', i >= 6 ? `broken ${i}\n` : `ok ${i}\n`);
+      shas.push(await commitAll(dir, `step ${i}`));
+    }
+    let state = await ops.bisectStart(dir, shas[7], shas[0]);
+    expect(state.done).toBe(false);
+    expect((await ops.info(dir)).bisecting).toBe(true);
+    // Answer like a tester would: look at the checked-out file.
+    for (let n = 0; n < 10 && !state.done; n++) state = await ops.bisectMark(dir, read(dir, 'speed.txt').startsWith('broken') ? 'bad' : 'good');
+    expect(state).toMatchObject({ done: true, firstBad: shas[5] });
+    await ops.bisectReset(dir);
+    expect((await ops.info(dir)).bisecting).toBe(false);
+    expect(sh(dir, 'rev-parse', 'HEAD')).toBe(shas[7]);
+  });
+});

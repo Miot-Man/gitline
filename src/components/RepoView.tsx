@@ -2,6 +2,8 @@ import { ChevronDown, Cloud } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Author,
+  BisectState,
+  CiStatus,
   Commit,
   CommitDetails,
   DiffTarget,
@@ -34,6 +36,9 @@ import { FileHistory, type FileViewMode } from './FileHistory';
 import { InteractiveRebase, type RebaseStep } from './InteractiveRebase';
 import { ConflictEditor } from './ConflictEditor';
 import { CreatePrDialog, type NewPr } from './CreatePrDialog';
+import { RecoverDialog } from './RecoverDialog';
+import { GitignoreDialog } from './GitignoreDialog';
+import { BisectBanner } from './BisectBanner';
 import { cleanTemplate, saveSettings, useSettings, shortcut } from '../lib/settings';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import {
@@ -130,6 +135,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [coAuthors, setCoAuthors] = useState<Author[]>([]);
   const [gh, setGh] = useState<GhStatus | null>(null);
   const [prs, setPrs] = useState<PullRequest[]>([]);
+  const [ci, setCi] = useState<Record<string, CiStatus>>({});
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [submodules, setSubmodules] = useState<Submodule[]>([]);
@@ -140,6 +146,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [fileView, setFileView] = useState<{ path: string; mode: FileViewMode; rev?: string } | null>(null);
   const [compareSha, setCompareSha] = useState<string | null>(null);
   const [graphFilter, setGraphFilter] = useState<GraphFilter>(() => loadFilter(path));
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const [bisect, setBisect] = useState<BisectState | null>(null);
+  const [gitignoreOpen, setGitignoreOpen] = useState(false);
   const [sideFocus, setSideFocus] = useState<{ key: string; n: number } | null>(null);
   const [rebaseEditor, setRebaseEditor] = useState<{ base: string; commits: RebaseCommit[] } | null>(null);
   const filterRef = useRef(graphFilter);
@@ -208,6 +217,10 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   // ---------- GitHub ----------
   const remotesKey = info?.remotes.join(',') ?? '';
   const loadPrs = useCallback(async () => {
+    // CI results come along with pull requests; a repo without Actions just gets no dots.
+    git<Record<string, CiStatus>>('ghCiStatus', path)
+      .then(setCi)
+      .catch(() => setCi({}));
     try {
       setPrs(await git<PullRequest[]>('ghPrs', path));
     } catch (e) {
@@ -953,6 +966,28 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs]);
 
+  // ---------- bisect ----------
+  // If the repo is mid-bisect (e.g. started in a terminal), pick it up; drop the banner once it ends.
+  useEffect(() => {
+    if (info?.bisecting && !bisect) setBisect({ done: false });
+    if (info && !info.bisecting && bisect) setBisect(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info?.bisecting]);
+
+  const startBisect = async (good: string) => {
+    if (!info?.head) return;
+    const r = await run('Starting bisect…', () => git<BisectState>('bisectStart', path, info.head, good));
+    if (r) setBisect(r);
+  };
+  const markBisect = async (verdict: 'good' | 'bad' | 'skip', sha?: string) => {
+    const r = await run('Bisecting…', () => git<BisectState>('bisectMark', path, verdict, sha));
+    if (r) setBisect(r);
+  };
+  const stopBisect = async () => {
+    await run('Ending bisect…', () => git('bisectReset', path), 'Bisect finished');
+    setBisect(null);
+  };
+
   const startInteractiveRebase = async (base: string) => {
     try {
       const plan = await git<RebaseCommit[]>('rebasePlan', path, base);
@@ -978,7 +1013,15 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     if (c.sha === WIP) {
       ui.menu(e, [
         { label: 'Stash all changes', onClick: stash },
+        {
+          label: 'Stash only staged changes',
+          disabled: !status.staged.length,
+          onClick: () => run('Stashing…', () => git('stash', path, undefined, undefined, true), 'Stashed staged changes'),
+        },
+        'sep',
         { label: 'Discard all changes', onClick: discardAll, danger: true },
+        'sep',
+        { label: 'Recover lost commits…', onClick: () => setRecoverOpen(true) },
       ]);
       return;
     }
@@ -1005,6 +1048,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       'sep',
       { label: `Interactive rebase ${cur} from here…`, disabled: !info?.branch || c.sha === info?.head, onClick: () => startInteractiveRebase(c.sha) },
       { label: 'Compare with HEAD', disabled: !info?.head || c.sha === info?.head, onClick: () => compareWithHead(c.sha) },
+      ...(bisect
+        ? [
+            { label: 'Bisect: mark this commit good', onClick: () => markBisect('good', c.sha) },
+            { label: 'Bisect: mark this commit bad', onClick: () => markBisect('bad', c.sha) },
+          ]
+        : [{ label: 'Bisect: this commit was good, HEAD is bad', disabled: !info?.head || c.sha === info?.head, onClick: () => startBisect(c.sha) }]),
       'sep',
       { label: 'Create tag here', onClick: () => createTag(c.sha) },
       { label: 'Create annotated tag here', onClick: () => createTag(c.sha, true) },
@@ -1132,6 +1181,20 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     ui.menu(e, items);
   };
 
+  // Viewing a stash shows it in the commit panel with its own actions.
+  const selectedStash = stashes.find((s) => s.sha === selected) ?? null;
+  const stashAction = async (s: Stash, action: 'apply' | 'pop' | 'drop') => {
+    if (action === 'apply') return run('Applying stash…', () => git('stashApply', path, s.ref), 'Applied stash');
+    if (action === 'pop') {
+      await run('Popping stash…', () => git('stashPop', path, s.ref), 'Popped stash');
+      return showChanges();
+    }
+    if (await ui.confirm({ title: 'Delete stash', message: <>Delete <b>{s.message}</b>?</>, confirmText: 'Delete', danger: true })) {
+      await run('Deleting stash…', () => git('stashDrop', path, s.ref), 'Deleted stash');
+      if (info?.head) selectSha(info.head);
+    }
+  };
+
   const stashMenu = (e: React.MouseEvent, s: Stash) =>
     ui.menu(e, [
       { label: 'Apply stash', onClick: () => run('Applying stash…', () => git('stashApply', path, s.ref), 'Applied stash') },
@@ -1184,6 +1247,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       items.push({ label: 'Stage', onClick: () => run('Staging…', () => git('stage', path, [f.path])) });
       items.push({ label: 'Discard changes', danger: true, onClick: () => discardFiles([f]) });
     }
+    if (f.status !== 'U') items.push({ label: 'Stash changes to this file', onClick: () => run('Stashing…', () => git('stash', path, `Changes to ${f.path}`, [f.path]), `Stashed ${f.path}`) });
     items.push('sep');
     if (f.status === '?') {
       items.push({ label: 'Ignore this file', onClick: () => run('Updating .gitignore…', () => git('ignore', path, `/${f.path}`)) });
@@ -1292,6 +1356,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     if (compare) add('View', 'Stop comparing', () => setCompareSha(null));
     add('Repo', 'Open in terminal', () => api.openTerminal(path));
     add('Repo', 'Open in editor', () => openInEditor());
+    add('Repo', 'Recover lost commits…', () => setRecoverOpen(true));
+    add('Repo', 'Edit .gitignore…', () => setGitignoreOpen(true));
     add('Repo', 'Reveal repository folder', () => api.openPath(path));
 
     for (const r of refs) {
@@ -1520,8 +1586,21 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               onSearch={(mode, q) => git<string[]>('searchCommits', path, mode, q)}
               onRefDrop={refDrop}
               wipFiles={wipFiles}
+              ci={ci}
               canLoadMore={commits.length >= logLimit}
               onLoadMore={() => setLogLimit((n) => n + LOG_PAGE)}
+              banner={
+                bisect && (
+                  <BisectBanner
+                    state={bisect}
+                    head={info?.head ?? null}
+                    subject={(sha) => commits.find((c) => c.sha === sha)?.subject ?? ''}
+                    onMark={(v) => markBisect(v)}
+                    onShow={(sha) => selectSha(sha)}
+                    onStop={stopBisect}
+                  />
+                )
+              }
               filterNote={
                 filterActive && (
                   <>
@@ -1580,6 +1659,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               coAuthors={coAuthors}
               onCoAuthorMenu={coAuthorMenu}
               onRemoveCoAuthor={(a) => setCoAuthors((cs) => cs.filter((c) => c.email !== a.email))}
+              onEditGitignore={() => setGitignoreOpen(true)}
               onIgnoredMenu={(e, f) =>
                 ui.menu(e, [
                   { label: 'Show in folder', onClick: () => api.showItem(joinPath(path, f.replace(/\/$/, ''))) },
@@ -1623,12 +1703,29 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               onSelectSha={selectSha}
               onFileMenu={(e, f) => commitFileMenu(e, f, selected)}
               toast={ui.toast}
+              stash={selectedStash}
+              onStashAction={(action) => selectedStash && stashAction(selectedStash, action)}
             />
           ) : (
             <div className="panel-empty">Select a commit to see its details</div>
           )}
         </div>
       </div>
+      {gitignoreOpen && <GitignoreDialog repo={path} onClose={() => setGitignoreOpen(false)} onSaved={() => ui.toast('Saved .gitignore', 'success')} />}
+      {recoverOpen && (
+        <RecoverDialog
+          repo={path}
+          onClose={() => setRecoverOpen(false)}
+          onCreateBranch={(sha) => {
+            setRecoverOpen(false);
+            createBranch(sha);
+          }}
+          onShow={(sha) => {
+            setRecoverOpen(false);
+            selectSha(sha);
+          }}
+        />
+      )}
       {prDraft && (
         <CreatePrDialog
           head={prDraft.head}

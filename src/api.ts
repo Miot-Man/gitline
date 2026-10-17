@@ -1,5 +1,13 @@
 type Unsub = () => void;
 
+export type UpdateState =
+  | { status: 'idle' | 'checking' | 'dev' }
+  | { status: 'current'; version: string }
+  | { status: 'available'; version: string; url: string } // can't self-install: link to the release
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'error'; message: string };
+
 interface Api {
   platform: string;
   git(op: string, cwd: string, ...args: unknown[]): Promise<any>;
@@ -17,6 +25,13 @@ interface Api {
   onMenu(cb: (cmd: string) => void): Unsub;
   onFocus(cb: () => void): Unsub;
   setTheme(theme: 'system' | 'light' | 'dark'): Promise<void>;
+  updates: {
+    check(): Promise<void>;
+    state(): Promise<UpdateState>;
+    install(): Promise<void>;
+    onChange(cb: (s: UpdateState) => void): Unsub;
+  };
+  version(): Promise<string>;
 }
 
 declare global {

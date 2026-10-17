@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { LanguageRule } from './highlight';
 
 // App-wide preferences kept in localStorage. Git identity lives in git config instead.
 export type PullMode = 'ff' | 'ff-only' | 'rebase';
@@ -11,9 +12,12 @@ export interface Settings {
   theme: Theme;
   editor: string; // command used for "Open in editor"; empty = auto-detect VS Code
   notifyPushes: boolean; // tell me when teammates push
+  autoUpdate: boolean; // check GitHub Releases for new versions
+  syntaxHighlighting: boolean;
+  syntaxRules: LanguageRule[]; // the user's language choices per file type
 }
 
-const DEFAULTS: Settings = { autoFetchMinutes: 5, pullMode: 'ff', commitTemplate: '', theme: 'system', editor: '', notifyPushes: true };
+const DEFAULTS: Settings = { autoFetchMinutes: 5, pullMode: 'ff', commitTemplate: '', theme: 'system', editor: '', notifyPushes: true, autoUpdate: true, syntaxHighlighting: true, syntaxRules: [] };
 const EVENT = 'gitline-settings';
 
 export function loadSettings(): Settings {

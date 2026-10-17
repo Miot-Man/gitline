@@ -48,6 +48,15 @@ export interface RepoInfo {
   mergeMsg: string | null;
   remotes: string[];
   fetchedAt: number | null; // ms since epoch of the last fetch/pull, if any
+  bisecting: boolean;
+}
+
+export interface BisectState {
+  done: boolean;
+  firstBad?: string | null;
+  left?: number | null;
+  steps?: number | null;
+  message?: string;
 }
 
 // What the active repo reports to the app shell for the rail badges and status bar.
@@ -130,6 +139,12 @@ export interface PullRequest {
   review: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
   fork: boolean;
   checks: 'success' | 'failure' | 'pending' | null;
+}
+
+export interface CiStatus {
+  state: 'success' | 'failure' | 'pending';
+  url: string;
+  name: string;
 }
 
 export interface GhStatus {

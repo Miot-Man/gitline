@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { RepoStats } from '../types';
+import type { UpdateState } from '../api';
 import { relativeTime } from '../lib/format';
 import { shortcut } from '../lib/settings';
 
@@ -9,9 +10,11 @@ interface Props {
   onChanges: () => void;
   onUndo: () => void;
   onPalette: () => void;
+  update: UpdateState;
+  onInstallUpdate: () => void;
 }
 
-export function StatusBar({ stats, onChanges, onUndo, onPalette }: Props) {
+export function StatusBar({ stats, onChanges, onUndo, onPalette, update, onInstallUpdate }: Props) {
   // Re-render every 30s so "Fetched 2 minutes ago" stays current.
   const [, tick] = useState(0);
   useEffect(() => {
@@ -48,6 +51,17 @@ export function StatusBar({ stats, onChanges, onUndo, onPalette }: Props) {
         <span>No repository open</span>
       )}
       <span className="status-spacer" />
+      {update.status === 'available' && (
+        <button className="status-link update" onClick={() => window.open(update.url)}>
+          Gitline {update.version} is available · Download
+        </button>
+      )}
+      {update.status === 'downloading' && <span className="status-update">Downloading Gitline {update.version}… {update.percent}%</span>}
+      {update.status === 'ready' && (
+        <button className="status-link update" onClick={onInstallUpdate}>
+          Restart to update to {update.version}
+        </button>
+      )}
       {stats?.undoLabel && (
         <button className="status-link" onClick={onUndo} title={`Undo (${shortcut('Z')})`}>
           Undo: {stats.undoLabel}

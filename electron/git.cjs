@@ -7,20 +7,21 @@ const path = require('path');
 const SEP = '\x1f';
 const REC = '\x1e';
 
-const ENV = {
+// Read at call time so changes to the environment (e.g. which global config to use) take effect.
+const ENV = () => ({
   ...process.env,
   LC_ALL: 'C',
   GIT_TERMINAL_PROMPT: '0',
   GIT_EDITOR: 'true',
   GIT_OPTIONAL_LOCKS: '0',
-};
+});
 
 function git(cwd, args, { allowFail = false, env } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       ['-c', 'core.quotepath=false', '-c', 'color.ui=false', ...args],
-      { cwd, env: env ? { ...ENV, ...env } : ENV, maxBuffer: 512 * 1024 * 1024 },
+      { cwd, env: { ...ENV(), ...env }, maxBuffer: 512 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err && !allowFail) {
           reject(new Error((stderr || stdout || err.message).trim()));
@@ -34,7 +35,7 @@ function git(cwd, args, { allowFail = false, env } = {}) {
 
 function gitInput(cwd, args, input) {
   return new Promise((resolve, reject) => {
-    const p = spawn('git', args, { cwd, env: ENV });
+    const p = spawn('git', args, { cwd, env: ENV() });
     let out = '';
     let errOut = '';
     p.stdout.on('data', (d) => (out += d));
@@ -48,7 +49,7 @@ function gitInput(cwd, args, input) {
 // Like git(), but returns stdout as a Buffer (for binary blobs).
 function gitBuffer(cwd, args) {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, env: ENV, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) =>
+    execFile('git', args, { cwd, env: ENV(), encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) =>
       err ? reject(new Error(stderr.toString().trim() || err.message)) : resolve(stdout)
     );
   });
@@ -70,7 +71,7 @@ function gh(cwd, args) {
     execFile(
       findGh(),
       args,
-      { cwd, env: { ...ENV, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024 },
+      { cwd, env: { ...ENV(), GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
           const msg = err.code === 'ENOENT' ? 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com.' : (stderr || stdout || err.message).trim();
@@ -80,6 +81,19 @@ function gh(cwd, args) {
     );
   });
 }
+
+// Reads `git bisect` output: either the first bad commit, or how much is left to test.
+function parseBisect(out) {
+  const found = out.match(/^([0-9a-f]{40}) is the first bad commit/m);
+  if (found) return { done: true, firstBad: found[1] };
+  if (/only 'skip'ped commits left/.test(out)) return { done: true, firstBad: null, message: "Couldn't narrow it down: only skipped commits are left." };
+  const left = out.match(/Bisecting: (\d+) revisions? left to test after this \(roughly (\d+) steps?\)/);
+  return { done: false, left: left ? Number(left[1]) : null, steps: left ? Number(left[2]) : null };
+}
+
+const IDENTITY_DIR = () => path.join(os.homedir(), '.config', 'gitline', 'identities');
+const expandHome = (p) => p.replace(/^~(?=[\\/]|$)/, os.homedir());
+const isManagedIdentity = (file) => path.resolve(expandHome(file)).startsWith(path.resolve(IDENTITY_DIR()));
 
 // Resolves a repo-relative path, refusing anything that escapes the repo.
 function repoFile(cwd, file) {
@@ -146,6 +160,7 @@ const ops = {
     ]);
     const gd = gitDir.stdout.trim();
     let state = null;
+    const bisecting = exists(gd, 'BISECT_LOG');
     if (exists(gd, 'rebase-merge') || exists(gd, 'rebase-apply')) state = 'rebase';
     else if (exists(gd, 'MERGE_HEAD')) state = 'merge';
     else if (exists(gd, 'CHERRY_PICK_HEAD')) state = 'cherry-pick';
@@ -173,6 +188,7 @@ const ops = {
       mergeMsg,
       remotes: lines(remotes.stdout),
       fetchedAt,
+      bisecting,
     };
   },
 
@@ -254,20 +270,22 @@ const ops = {
     return { staged, unstaged, conflicted };
   },
 
-  async diffWorking(cwd, file, staged, untracked, oldPath) {
+  // `ignoreWs` hides whitespace-only changes (git diff -w); such diffs can't be applied back as patches.
+  async diffWorking(cwd, file, staged, untracked, oldPath, ignoreWs) {
     if (untracked) {
       return (await git(cwd, ['diff', '--no-index', '--no-ext-diff', '--', '/dev/null', file], { allowFail: true })).stdout;
     }
-    const args = ['diff', '--no-ext-diff', '-M'];
+    const args = ['diff', '--no-ext-diff', '-M', ...(ignoreWs ? ['-w'] : [])];
     if (staged) args.push('--cached');
     args.push('--', ...(oldPath ? [oldPath, file] : [file]));
     return (await git(cwd, args)).stdout;
   },
 
-  async diffCommit(cwd, sha, file, oldPath, parent) {
+  async diffCommit(cwd, sha, file, oldPath, parent, ignoreWs) {
     const paths = oldPath ? [oldPath, file] : [file];
-    if (parent) return (await git(cwd, ['diff', '--no-ext-diff', '-M', parent, sha, '--', ...paths])).stdout;
-    return (await git(cwd, ['show', '--no-ext-diff', '--format=', '-M', sha, '--', ...paths])).stdout;
+    const ws = ignoreWs ? ['-w'] : [];
+    if (parent) return (await git(cwd, ['diff', '--no-ext-diff', '-M', ...ws, parent, sha, '--', ...paths])).stdout;
+    return (await git(cwd, ['show', '--no-ext-diff', '--format=', '-M', ...ws, sha, '--', ...paths])).stdout;
   },
 
   async commitDetails(cwd, sha) {
@@ -521,6 +539,39 @@ const ops = {
     await git(cwd, ['update-ref', '-d', full, sha]);
   },
 
+  // ---- bisect: find the commit that introduced a problem ----
+  async bisectStart(cwd, bad, good) {
+    await git(cwd, ['bisect', 'start']);
+    await git(cwd, ['bisect', 'bad', bad]);
+    return parseBisect((await git(cwd, ['bisect', 'good', good])).stdout);
+  },
+  // `verdict` is good, bad or skip; `sha` defaults to the commit being tested.
+  async bisectMark(cwd, verdict, sha) {
+    return parseBisect((await git(cwd, ['bisect', verdict, ...(sha ? [sha] : [])])).stdout);
+  },
+  async bisectReset(cwd) {
+    await git(cwd, ['bisect', 'reset']);
+  },
+
+  // ---- recovering lost work ----
+  // Recent HEAD reflog entries, each flagged when its commit is no longer reachable from any branch or tag.
+  async reflog(cwd, limit = 200) {
+    const r = await git(cwd, ['reflog', '-n', String(limit), '--format=%H%x1f%gd%x1f%gs%x1f%ct%x1f%s'], { allowFail: true });
+    if (r.code !== 0) return [];
+    const entries = lines(r.stdout).map((l) => {
+      const [sha, ref, action, time, subject] = l.split(SEP);
+      return { sha, ref, action, time: Number(time), subject };
+    });
+    const shas = [...new Set(entries.map((e) => e.sha))];
+    // For each commit, check whether any branch/tag/remote still contains it.
+    const reachable = new Set();
+    for (const sha of shas) {
+      const c = await git(cwd, ['for-each-ref', '--count=1', '--contains', sha, '--format=%(refname)', 'refs/heads', 'refs/tags', 'refs/remotes'], { allowFail: true });
+      if (c.stdout.trim()) reachable.add(sha);
+    }
+    return entries.map((e) => ({ ...e, lost: !reachable.has(e.sha) }));
+  },
+
   // ---- worktrees ----
   async worktrees(cwd) {
     const [r, top] = await Promise.all([git(cwd, ['worktree', 'list', '--porcelain']), git(cwd, ['rev-parse', '--show-toplevel'])]);
@@ -657,6 +708,54 @@ const ops = {
       });
   },
 
+  // ---- identity per folder (git's includeIf) ----
+  // Gitline writes each rule's [user] block to its own file and includes it for repos under the folder.
+  // Rules pointing anywhere else were set up by hand; they're listed but never changed.
+  async identityRules() {
+    const home = os.homedir();
+    const r = await git(home, ['config', '--global', '--get-regexp', '^includeif\\.gitdir'], { allowFail: true });
+    const rules = [];
+    for (const line of lines(r.stdout)) {
+      const sp = line.lastIndexOf(' ');
+      const key = line.slice(0, sp);
+      const file = line.slice(sp + 1);
+      const m = key.match(/^includeif\.(gitdir(?:\/i)?):(.*)\.path$/i);
+      if (!m) continue;
+      const read = async (k) => (await git(home, ['config', '--file', expandHome(file), '--get', k], { allowFail: true })).stdout.trim();
+      rules.push({ key, folder: m[2].replace(/\/$/, ''), name: await read('user.name'), email: await read('user.email'), managed: isManagedIdentity(file) });
+    }
+    return rules;
+  },
+  // Replaces every Gitline-managed rule with `rules` ({ folder, name, email }).
+  async saveIdentityRules(_cwd, rules) {
+    const home = os.homedir();
+    for (const old of await ops.identityRules()) {
+      if (old.managed) await git(home, ['config', '--global', '--unset-all', old.key], { allowFail: true });
+    }
+    fs.rmSync(IDENTITY_DIR(), { recursive: true, force: true });
+    fs.mkdirSync(IDENTITY_DIR(), { recursive: true });
+    for (const [i, rule] of rules.entries()) {
+      const folder = rule.folder.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+      if (!folder || (!rule.name.trim() && !rule.email.trim())) continue;
+      const file = path.join(IDENTITY_DIR(), `${i + 1}-${folder.split('/').pop() || 'root'}.gitconfig`).replace(/\\/g, '/');
+      if (rule.name.trim()) await git(home, ['config', '--file', file, 'user.name', rule.name.trim()]);
+      if (rule.email.trim()) await git(home, ['config', '--file', file, 'user.email', rule.email.trim()]);
+      // Trailing slash = everything under the folder; Windows paths compare case-insensitively.
+      const cond = `${process.platform === 'win32' ? 'gitdir/i' : 'gitdir'}:${folder}/`;
+      await git(home, ['config', '--global', '--add', `includeIf.${cond}.path`, file]);
+    }
+  },
+  // Which name/email a repo will actually commit with, and where it comes from.
+  async effectiveIdentity(cwd) {
+    const get = async (k) => (await git(cwd, ['config', '--show-origin', '--get', k], { allowFail: true })).stdout.trim();
+    const [n, e] = await Promise.all([get('user.name'), get('user.email')]);
+    const split = (s) => {
+      const tab = s.indexOf('\t');
+      return tab < 0 ? { value: '', origin: '' } : { origin: s.slice(0, tab).replace(/^file:/, ''), value: s.slice(tab + 1) };
+    };
+    return { name: split(n), email: split(e) };
+  },
+
   // ---- GitHub (via the gh CLI) ----
   async ghStatus(cwd) {
     const remotes = (await git(cwd, ['remote', '-v'])).stdout;
@@ -684,12 +783,37 @@ const ops = {
       checks: summarizeChecks(p.statusCheckRollup ?? []),
     }));
   },
+  // GitHub Actions results for recent commits: one state per commit, failing if any run failed.
+  async ghCiStatus(cwd) {
+    const out = await gh(cwd, ['run', 'list', '--limit', '200', '--json', 'headSha,status,conclusion,url,name']);
+    const bySha = {};
+    for (const r of JSON.parse(out)) {
+      const state =
+        r.status !== 'completed' ? 'pending' : ['success', 'skipped', 'neutral'].includes(r.conclusion) ? 'success' : r.conclusion === 'cancelled' ? null : 'failure';
+      if (!state) continue;
+      const cur = bySha[r.headSha];
+      const rank = { failure: 3, pending: 2, success: 1 };
+      if (!cur || rank[state] > rank[cur.state]) bySha[r.headSha] = { state, url: r.url, name: r.name };
+    }
+    return bySha;
+  },
   async ghCreatePr(cwd, head, base, title, body, draft) {
     const out = await gh(cwd, ['pr', 'create', '--head', head, '--base', base, '--title', title, '--body', body ?? '', ...(draft ? ['--draft'] : [])]);
     return out.trim().split('\n').pop();
   },
   async ghCheckoutPr(cwd, number) {
     await gh(cwd, ['pr', 'checkout', String(number)]);
+  },
+  // Repositories the signed-in GitHub user can clone: their own, ones they collaborate on, and their orgs'.
+  // Runs from the home folder because it doesn't belong to any repo.
+  async ghMyRepos() {
+    const out = await gh(os.homedir(), [
+      'api',
+      'user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member',
+      '--jq',
+      '[.[] | {name: .full_name, description: .description, private: .private, url: .clone_url, updated: .updated_at}]',
+    ]);
+    return JSON.parse(out);
   },
   async ghDefaultBranch(cwd) {
     try {
@@ -712,8 +836,11 @@ const ops = {
   },
 
   // ---- stash ----
-  async stash(cwd, message) {
-    await git(cwd, ['stash', 'push', '-u', ...(message ? ['-m', message] : [])]);
+  // `paths` stashes just those files; `stagedOnly` stashes just what's in the index.
+  async stash(cwd, message, paths, stagedOnly) {
+    const m = message ? ['-m', message] : [];
+    if (stagedOnly) await git(cwd, ['stash', 'push', '--staged', ...m]);
+    else await git(cwd, ['stash', 'push', '-u', ...m, ...(paths?.length ? ['--', ...paths] : [])]);
   },
   stashApply: (cwd, ref) => conflictAware(cwd, ['stash', 'apply', ref]),
   stashPop: (cwd, ref) => conflictAware(cwd, ['stash', 'pop', ...(ref ? [ref] : [])]),

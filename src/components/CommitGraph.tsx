@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Cloud, Tag, Check, Search, X, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
-import type { Commit, Ref } from '../types';
+import type { CiStatus, Commit, Ref } from '../types';
 import { WIP } from '../types';
 import type { GraphRow } from '../lib/graph';
 import { RESERVED, laneColor } from '../lib/graph';
@@ -13,6 +13,7 @@ const LANE_W = 16;
 const R = 5;
 const PAD = 10;
 const MAX_TAGS = 2;
+const CI_LABEL = { success: 'passed', failure: 'failed', pending: 'running' } as const;
 
 export interface GraphItem {
   commit: Commit;
@@ -54,10 +55,12 @@ interface Props {
   onCompare: (sha: string) => void;
   onSearch: (mode: Exclude<SearchMode, 'message'>, query: string) => Promise<string[]>;
   filterNote: React.ReactNode;
+  banner?: React.ReactNode;
   onRefDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void;
   canLoadMore: boolean;
   onLoadMore: () => void;
   wipFiles: string[];
+  ci: Record<string, CiStatus>;
 }
 
 export type SearchMode = 'message' | 'changes' | 'path';
@@ -312,7 +315,18 @@ export function CommitGraph(props: Props) {
               )}
             </span>
           ) : (
-            <span className="msg-subject">{c.subject}</span>
+            <>
+              <span className="msg-subject">{c.subject}</span>
+              {props.ci[c.sha] && (
+                <button
+                  className={`ci-dot ${props.ci[c.sha].state}`}
+                  title={`${props.ci[c.sha].name}: ${CI_LABEL[props.ci[c.sha].state]} (click to open on GitHub)`}
+                  aria-label={`CI ${CI_LABEL[props.ci[c.sha].state]}`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => window.open(props.ci[c.sha].url)}
+                />
+              )}
+            </>
           )}
         </div>
         <div className="col-author">
@@ -390,6 +404,7 @@ export function CommitGraph(props: Props) {
           </div>
         )}
       </div>
+      {props.banner}
       {props.filterNote && <div className="graph-filter-note">{props.filterNote}</div>}
       <div className="graph-scroll" ref={scrollRef} tabIndex={0} onKeyDown={onKeyDown} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
         <div style={{ height: items.length * ROW_H + (props.canLoadMore ? ROW_H * 2 : 0), position: 'relative' }}>

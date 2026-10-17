@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, basename, cleanError } from './api';
+import { api, basename, cleanError, type UpdateState } from './api';
 import { UIProvider, useUI } from './components/ui';
 import { RepoView } from './components/RepoView';
 import { Welcome } from './components/Welcome';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { SettingsDialog } from './components/SettingsDialog';
+import { ShortcutsDialog } from './components/ShortcutsDialog';
 import { Rail } from './components/Rail';
 import { StatusBar } from './components/StatusBar';
 import type { RepoStats } from './types';
@@ -49,9 +50,46 @@ function useTheme() {
   }, [theme]);
 }
 
+const UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
+
+// Checks GitHub Releases at startup and every few hours (when enabled), and on demand from the menu.
+function useUpdates() {
+  const ui = useUI();
+  const { autoUpdate } = useSettings();
+  const [state, setState] = useState<UpdateState>({ status: 'idle' });
+  const manual = useRef(false);
+
+  useEffect(
+    () =>
+      api.updates.onChange((s) => {
+        setState(s);
+        if (!manual.current) return;
+        if (s.status === 'current') ui.toast(`Gitline ${s.version} is the latest version.`, 'success');
+        if (s.status === 'error') ui.toast(`Couldn't check for updates: ${s.message}`, 'error');
+        if (s.status === 'dev') ui.toast('Updates are only checked in installed builds.', 'info');
+        if (s.status !== 'checking') manual.current = false;
+      }),
+    [ui]
+  );
+
+  useEffect(() => {
+    if (!autoUpdate) return;
+    api.updates.check();
+    const t = setInterval(() => api.updates.check(), UPDATE_INTERVAL);
+    return () => clearInterval(t);
+  }, [autoUpdate]);
+
+  const checkNow = () => {
+    manual.current = true;
+    api.updates.check();
+  };
+  return { state, checkNow };
+}
+
 function Shell() {
   const ui = useUI();
   useTheme();
+  const updates = useUpdates();
   const [{ tabs, active }, setState] = useState(loadTabs);
   const [welcomeMode, setWelcomeMode] = useState<WelcomeMode>('home');
   const [command, setCommand] = useState<{ name: string; n: number } | null>(null);
@@ -59,8 +97,11 @@ function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [stats, setStats] = useState<RepoStats | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const settings = useSettings();
   const stateRef = useRef({ tabs, active });
+  const checkUpdatesRef = useRef(updates.checkNow);
+  checkUpdatesRef.current = updates.checkNow;
   stateRef.current = { tabs, active };
 
   useEffect(() => {
@@ -136,6 +177,10 @@ function Shell() {
             return closeTab(stateRef.current.active);
           case 'settings':
             return setSettingsOpen(true);
+          case 'check-updates':
+            return checkUpdatesRef.current();
+          case 'shortcuts':
+            return setShortcutsOpen(true);
           default:
             setCommand({ name: cmd, n: Date.now() });
         }
@@ -194,6 +239,8 @@ function Shell() {
     { id: 'app:clone', group: 'Repo', label: 'Clone repository…', hint: shortcut('N'), run: () => newTab('clone') },
     { id: 'app:init', group: 'Repo', label: 'Init repository…', hint: shortcut('I'), run: () => newTab('init') },
     { id: 'app:settings', group: 'App', label: 'Settings…', hint: shortcut(','), run: () => setSettingsOpen(true) },
+    { id: 'app:updates', group: 'App', label: 'Check for updates', run: updates.checkNow },
+    { id: 'app:shortcuts', group: 'App', label: 'Keyboard shortcuts', hint: shortcut('/'), run: () => setShortcutsOpen(true) },
     { id: 'app:new-tab', group: 'Tab', label: 'New tab', hint: shortcut('T'), run: () => newTab() },
     { id: 'app:close-tab', group: 'Tab', label: 'Close tab', hint: shortcut('W'), run: () => closeTab(active) },
   ];
@@ -240,8 +287,11 @@ function Shell() {
         onChanges={() => sendCommand('view-changes')}
         onUndo={() => sendCommand('undo')}
         onPalette={openPalette}
+        update={updates.state}
+        onInstallUpdate={() => api.updates.install()}
       />
       {paletteOpen && <CommandPalette commands={appCommands} onClose={() => setPaletteOpen(false)} />}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {settingsOpen && <SettingsDialog repo={activeTab?.path ?? null} onClose={() => setSettingsOpen(false)} />}
     </div>
   );

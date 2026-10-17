@@ -123,6 +123,59 @@ ipcMain.handle('shell:terminal', (_e, p) => {
   else spawn('x-terminal-emulator', [], { cwd: p, detached: true });
 });
 
+// ---------- updates ----------
+// Updates come from GitHub Releases (electron-updater reads latest*.yml). Windows (NSIS) and the AppImage can
+// install themselves; unsigned macOS builds and the rpm/pacman packages can't, so those get a link to the release.
+const RELEASES_URL = 'https://github.com/Miot-Man/gitline/releases/latest';
+let updater = null;
+let updateState = { status: 'idle' };
+
+function canSelfUpdate() {
+  return process.platform === 'win32' || (process.platform === 'linux' && !!process.env.APPIMAGE);
+}
+
+function setUpdateState(state) {
+  updateState = state;
+  send('update', state);
+}
+
+function getUpdater() {
+  if (updater) return updater;
+  ({ autoUpdater: updater } = require('electron-updater'));
+  // Set explicitly so checks don't depend on a generated app-update.yml.
+  updater.setFeedURL({ provider: 'github', owner: 'Miot-Man', repo: 'gitline' });
+  updater.autoDownload = false;
+  updater.autoInstallOnAppQuit = true;
+  updater.on('update-available', (info) => {
+    if (canSelfUpdate()) {
+      setUpdateState({ status: 'downloading', version: info.version, percent: 0 });
+      updater.downloadUpdate().catch((e) => setUpdateState({ status: 'error', message: e.message }));
+    } else setUpdateState({ status: 'available', version: info.version, url: RELEASES_URL });
+  });
+  updater.on('update-not-available', () => setUpdateState({ status: 'current', version: app.getVersion() }));
+  updater.on('download-progress', (p) => setUpdateState({ ...updateState, status: 'downloading', percent: Math.round(p.percent) }));
+  updater.on('update-downloaded', (info) => setUpdateState({ status: 'ready', version: info.version }));
+  updater.on('error', (e) => setUpdateState({ status: 'error', message: e?.message ?? String(e) }));
+  return updater;
+}
+
+async function checkForUpdates() {
+  // Dev builds have no release metadata to compare against.
+  if (!app.isPackaged) return setUpdateState({ status: 'dev' });
+  if (['downloading', 'ready'].includes(updateState.status)) return send('update', updateState);
+  setUpdateState({ status: 'checking' });
+  try {
+    await getUpdater().checkForUpdates();
+  } catch (e) {
+    setUpdateState({ status: 'error', message: e.message });
+  }
+}
+
+ipcMain.handle('update:check', () => checkForUpdates());
+ipcMain.handle('update:state', () => updateState);
+ipcMain.handle('update:install', () => updater?.quitAndInstall());
+ipcMain.handle('app:version', () => app.getVersion());
+
 // ---------- external editor ----------
 // Where VS Code's CLI usually lives; Finder-launched apps don't get the shell PATH.
 const EDITOR_CANDIDATES = {
@@ -175,6 +228,7 @@ function buildMenu() {
         { label: 'Init Repository…', accelerator: 'CmdOrCtrl+I', click: () => send('menu', 'init') },
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
+        { label: 'Check for Updates…', click: () => send('menu', 'check-updates') },
         { type: 'separator' },
         { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => send('menu', 'close-tab') },
         ...(isMac ? [] : [{ role: 'quit' }]),
@@ -211,6 +265,13 @@ function buildMenu() {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: () => send('menu', 'shortcuts') },
+        { label: 'Gitline on GitHub', click: () => shell.openExternal('https://github.com/Miot-Man/gitline') },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

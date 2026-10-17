@@ -1,7 +1,7 @@
 import { shortcut } from '../lib/settings';
 import { useEffect, useRef, useState } from 'react';
 import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal, X, ArrowUpDown, Users, ChevronDown, ChevronRight, EyeOff } from 'lucide-react';
-import type { Author, Commit, CommitDetails, FileChange, RepoInfo, Status } from '../types';
+import type { Author, Commit, CommitDetails, FileChange, RepoInfo, Stash, Status } from '../types';
 import { git } from '../api';
 import { authorColor, formatDate, relativeTime, splitPath } from '../lib/format';
 import { Avatar } from './ui';
@@ -109,6 +109,7 @@ interface StagingProps {
   onCoAuthorMenu: (e: React.MouseEvent) => void;
   onRemoveCoAuthor: (a: Author) => void;
   onIgnoredMenu: (e: React.MouseEvent, path: string) => void;
+  onEditGitignore: () => void;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -280,6 +281,15 @@ export function StagingPanel(p: StagingProps) {
             <span>
               {showIgnored ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Ignored Files{showIgnored && ignored ? ` (${ignored.length})` : ''}
             </span>
+            <button
+              className="btn btn-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onEditGitignore();
+              }}
+            >
+              Edit .gitignore
+            </button>
           </div>
           {showIgnored && (
             <div className="file-list">
@@ -375,9 +385,11 @@ interface CommitPanelProps {
   onSelectSha: (sha: string) => void;
   onFileMenu: (e: React.MouseEvent, f: FileChange) => void;
   toast: (m: string, k?: 'error' | 'info' | 'success') => void;
+  stash: Stash | null; // set when the selected commit is a stash
+  onStashAction: (action: 'apply' | 'pop' | 'drop') => void;
 }
 
-export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSelectSha, onFileMenu, toast }: CommitPanelProps) {
+export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSelectSha, onFileMenu, toast, stash, onStashAction }: CommitPanelProps) {
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
   useFileStepper(details?.sha === sha ? details.files : [], activePath, (f) => details && onOpenDiff(details, f));
@@ -411,6 +423,24 @@ export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSele
 
   return (
     <div className="commit-panel">
+      {stash && (
+        <div className="stash-banner">
+          <span>
+            <b>Stash</b> · {stash.ref}
+          </span>
+          <span className="stash-actions">
+            <button className="btn btn-xs btn-primary" onClick={() => onStashAction('apply')}>
+              Apply
+            </button>
+            <button className="btn btn-xs" onClick={() => onStashAction('pop')}>
+              Pop
+            </button>
+            <button className="btn btn-xs btn-danger-ghost" onClick={() => onStashAction('drop')}>
+              Delete
+            </button>
+          </span>
+        </div>
+      )}
       <div className="panel-header">
         <span className="sha-line">
           commit: <code>{details.sha.slice(0, 7)}</code>
