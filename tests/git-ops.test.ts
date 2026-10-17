@@ -411,9 +411,16 @@ describe('bisect', () => {
     let state = await ops.bisectStart(dir, shas[7], shas[0]);
     expect(state.done).toBe(false);
     expect((await ops.info(dir)).bisecting).toBe(true);
-    // Answer like a tester would: look at the checked-out file.
-    for (let n = 0; n < 10 && !state.done; n++) state = await ops.bisectMark(dir, read(dir, 'speed.txt').startsWith('broken') ? 'bad' : 'good');
-    expect(state).toMatchObject({ done: true, firstBad: shas[5] });
+    // Answer like a tester would: look at the checked-out file. Record each step so a failure on
+    // another git version shows what git did.
+    const steps: string[] = [`git ${sh(dir, 'version')}`, `start -> ${JSON.stringify(state)} HEAD=${sh(dir, 'rev-parse', 'HEAD')}`];
+    for (let n = 0; n < 10 && !state.done; n++) {
+      const file = read(dir, 'speed.txt');
+      const verdict = file.startsWith('broken') ? 'bad' : 'good';
+      state = await ops.bisectMark(dir, verdict);
+      steps.push(`${file.trim()} -> ${verdict} -> ${JSON.stringify(state)} HEAD=${sh(dir, 'rev-parse', 'HEAD')}`);
+    }
+    expect(state, [...steps, sh(dir, 'bisect', 'log')].join('\n')).toMatchObject({ done: true, firstBad: shas[5] });
     await ops.bisectReset(dir);
     expect((await ops.info(dir)).bisecting).toBe(false);
     expect(sh(dir, 'rev-parse', 'HEAD')).toBe(shas[7]);
