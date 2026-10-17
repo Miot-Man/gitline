@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 
 export type MenuItem =
-  | { label: string; onClick?: () => void; danger?: boolean; disabled?: boolean; hint?: string }
+  | { label: string; onClick?: () => void; danger?: boolean; disabled?: boolean; hint?: string; icon?: ReactNode }
   | 'sep';
 
 interface PromptOpts {
@@ -161,7 +161,10 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
               it.onClick?.();
             }}
           >
-            <span>{it.label}</span>
+            <span className="menu-label">
+              {it.icon && <span className="menu-icon">{it.icon}</span>}
+              {it.label}
+            </span>
             {it.hint && <span className="menu-hint">{it.hint}</span>}
           </button>
         )

@@ -173,3 +173,25 @@ test('opening a file diff shows a trail, arrow keys step files, back returns', a
   await expect(row(page, 'Two files')).toBeVisible();
   await expect(page.locator('.trail-branch')).toBeVisible();
 });
+
+test('branch selector lists remote branches and checks them out', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', 'a\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  gl.git('init', '-q', '--bare', '../origin.git');
+  gl.git('remote', 'add', 'origin', '../origin.git');
+  gl.git('push', '-q', 'origin', 'main');
+  gl.git('checkout', '-qb', 'feature/remote-only');
+  gl.git('push', '-q', 'origin', 'feature/remote-only');
+  gl.git('checkout', '-q', 'main');
+  gl.git('branch', '-q', '-D', 'feature/remote-only');
+  await gl.open();
+
+  await page.locator('.trail-branch').click();
+  const item = page.locator('.context-menu .menu-item', { hasText: 'origin/feature/remote-only' });
+  await expect(item.locator('.menu-icon svg')).toBeVisible();
+  await item.click();
+  await expect(page.locator('.trail-branch', { hasText: 'feature/remote-only' })).toBeVisible();
+  expect(gl.git('rev-parse', '--abbrev-ref', '@{u}')).toBe('origin/feature/remote-only');
+});

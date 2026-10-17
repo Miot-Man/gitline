@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Cloud } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Author,
@@ -351,6 +351,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const currentRef = refs.find((r) => r.type === 'local' && r.isHead);
   const track = parseTrack(currentRef?.track);
   const locals = refs.filter((r) => r.type === 'local');
+  const remoteBranches = refs.filter((r) => r.type === 'remote');
 
   // ---------- selection housekeeping ----------
   useEffect(() => {
@@ -1217,6 +1218,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const branchMenu = (e: React.MouseEvent) =>
     ui.menu(e, [
       ...locals.map((r) => ({ label: `${r.isHead ? '✓ ' : '   '}${r.name}`, onClick: () => checkoutRef(r) })),
+      // Remote branches check out as a local tracking branch (or switch to it if one exists).
+      ...(remoteBranches.length ? ['sep' as const] : []),
+      ...remoteBranches.map((r) => ({ label: r.name, icon: <Cloud size={13} />, onClick: () => checkoutRef(r) })),
       'sep' as const,
       { label: 'Create new branch…', onClick: () => createBranch() },
     ]);
