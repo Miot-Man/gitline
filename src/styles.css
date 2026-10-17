@@ -1235,14 +1235,18 @@ pre {
 .diff-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 42px;
+  /* Buttons wrap onto a second row in narrow windows instead of running under the right panel. */
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-height: 42px;
   flex-shrink: 0;
-  padding: 0 10px 0 14px;
+  padding: 6px 10px 6px 14px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--divider);
 }
 .diff-path {
+  min-width: 0;
+  max-width: 100%;
   font-weight: 600;
   color: var(--text-strong);
   white-space: nowrap;
@@ -2352,4 +2356,19 @@ kbd {
 .sub-state.modified,
 .sub-state.conflict {
   color: var(--orange);
+}
+
+/* Keep every column inside its own box in narrow windows. */
+.center {
+  overflow: hidden;
+}
+.seg button {
+  white-space: nowrap;
+}
+.conflict-card-header {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.conflict-card-header .seg {
+  flex-wrap: wrap;
 }

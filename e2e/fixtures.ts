@@ -40,6 +40,9 @@ export const test = base.extend<{ gl: Gitline }>({
       env,
     });
     const page = await app.firstWindow();
+    // Test at the smallest allowed window so layouts are checked where space is tightest
+    // (and results don't depend on the machine's screen size).
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 640));
     await page.waitForSelector('.app');
     const gl: Gitline = {
       app,
