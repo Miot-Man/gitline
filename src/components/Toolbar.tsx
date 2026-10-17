@@ -1,6 +1,8 @@
-import { ArrowDown, ArrowUp, GitBranch, Archive, ArchiveRestore, ChevronDown, SquareTerminal, FolderOpen, Loader2, RefreshCw, Undo2, Redo2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, GitBranch, Archive, ArchiveRestore, ChevronDown, SquareTerminal, FolderOpen, Loader2, RefreshCw, Undo2, Redo2, Code2 } from 'lucide-react';
 
-export type PullMode = 'ff' | 'ff-only' | 'rebase';
+import { shortcut, type PullMode } from '../lib/settings';
+
+export type { PullMode };
 
 export const PULL_LABELS: Record<PullMode, string> = {
   ff: 'Pull (fast-forward if possible)',
@@ -29,6 +31,7 @@ interface Props {
   onUndo: () => void;
   onRedo: () => void;
   onTerminal: () => void;
+  onEditor: () => void;
   onReveal: () => void;
 }
 
@@ -63,8 +66,8 @@ export function Toolbar(p: Props) {
         </button>
       </div>
       <div className="toolbar-center">
-        <ToolButton icon={<Undo2 size={18} />} label="Undo" onClick={p.onUndo} disabled={!!p.busy || !p.undoLabel} title={p.undoLabel ? `Undo ${p.undoLabel} (⌘Z)` : 'Nothing to undo'} />
-        <ToolButton icon={<Redo2 size={18} />} label="Redo" onClick={p.onRedo} disabled={!!p.busy || !p.redoLabel} title={p.redoLabel ? `Redo ${p.redoLabel} (⇧⌘Z)` : 'Nothing to redo'} />
+        <ToolButton icon={<Undo2 size={18} />} label="Undo" onClick={p.onUndo} disabled={!!p.busy || !p.undoLabel} title={p.undoLabel ? `Undo ${p.undoLabel} (${shortcut('Z')})` : 'Nothing to undo'} />
+        <ToolButton icon={<Redo2 size={18} />} label="Redo" onClick={p.onRedo} disabled={!!p.busy || !p.redoLabel} title={p.redoLabel ? `Redo ${p.redoLabel} (${shortcut('Z', true)})` : 'Nothing to redo'} />
         <span className="tool-sep" />
         <ToolButton icon={<RefreshCw size={18} />} label="Fetch" onClick={p.onFetch} disabled={!!p.busy} />
         <div className="split-btn">
@@ -87,6 +90,7 @@ export function Toolbar(p: Props) {
           </span>
         )}
         <ToolButton icon={<FolderOpen size={18} />} label="Reveal" onClick={p.onReveal} />
+        <ToolButton icon={<Code2 size={18} />} label="Editor" onClick={p.onEditor} />
         <ToolButton icon={<SquareTerminal size={18} />} label="Terminal" onClick={p.onTerminal} />
       </div>
     </div>

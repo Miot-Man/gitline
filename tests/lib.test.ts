@@ -1,0 +1,123 @@
+import { describe, expect, it } from 'vitest';
+import { buildLinePatch, parseDiff } from '../src/lib/diff';
+import { computeGraph } from '../src/lib/graph';
+import { hasMarkers, parseConflicts, resolved } from '../src/lib/conflicts';
+import { cleanTemplate } from '../src/lib/settings';
+import { branchCreated, checkoutMove, headMove, refsDeleted, sameHead } from '../src/lib/undo';
+import { parseTrack } from '../src/lib/format';
+
+const DIFF = `diff --git a/f b/f
+index 1111111..2222222 100644
+--- a/f
++++ b/f
+@@ -1,3 +1,3 @@ fn
+ a
+-b
++B
+ c
+`;
+
+describe('parseDiff', () => {
+  it('numbers lines on both sides', () => {
+    const d = parseDiff(DIFF);
+    expect(d.binary).toBe(false);
+    expect(d.hunks).toHaveLength(1);
+    expect(d.hunks[0].lines.map((l) => [l.type, l.oldNo, l.newNo])).toEqual([
+      ['ctx', 1, 1],
+      ['del', 2, undefined],
+      ['add', undefined, 2],
+      ['ctx', 3, 3],
+    ]);
+  });
+
+  it('detects binary files', () => {
+    expect(parseDiff('diff --git a/x b/x\nBinary files a/x and b/x differ\n').binary).toBe(true);
+  });
+});
+
+describe('buildLinePatch', () => {
+  const hunk = parseDiff(DIFF).hunks[0];
+  it('keeps unselected deletions as context when staging', () => {
+    const patch = buildLinePatch('H\n', hunk, new Set([2]), false); // only "+B"
+    expect(patch).toBe('H\n@@ -1 +1 @@ fn\n a\n b\n+B\n c\n');
+  });
+  it('keeps unselected additions as context when reversing', () => {
+    const patch = buildLinePatch('H\n', hunk, new Set([1]), true); // only "-b"
+    // Kept additions come first, so the restored line lands after them.
+    expect(patch).toBe('H\n@@ -1 +1 @@ fn\n a\n B\n-b\n c\n');
+  });
+});
+
+describe('computeGraph', () => {
+  it('puts a branch on its own lane and merges it back', () => {
+    // m merges f into b; both descend from a.
+    const commits = [
+      { sha: 'm', parents: ['b', 'f'] },
+      { sha: 'f', parents: ['a'] },
+      { sha: 'b', parents: ['a'] },
+      { sha: 'a', parents: [] },
+    ];
+    const { rows, maxLanes } = computeGraph(commits);
+    expect(maxLanes).toBe(2);
+    expect(rows[0].parentCols).toEqual([0, 1]);
+    expect(rows[1].col).toBe(1);
+    expect(rows[3].col).toBe(0);
+  });
+});
+
+describe('conflicts', () => {
+  const text = 'top\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> feature\nbottom\n';
+  it('parses diff3 blocks', () => {
+    const segs = parseConflicts(text);
+    expect(segs).toHaveLength(3);
+    expect(segs[1]).toMatchObject({ kind: 'conflict', ours: 'ours\n', base: 'base\n', theirs: 'theirs\n', oursLabel: 'HEAD', theirsLabel: 'feature' });
+  });
+  it('resolves each choice', () => {
+    const c = parseConflicts(text)[1];
+    if (c.kind !== 'conflict') throw new Error('expected conflict');
+    expect(resolved(c, 'ours')).toBe('ours\n');
+    expect(resolved(c, 'both-reverse')).toBe('theirs\nours\n');
+    expect(hasMarkers(resolved(c, undefined))).toBe(true);
+    expect(hasMarkers(resolved(c, 'both'))).toBe(false);
+  });
+  it('treats an unterminated marker as text', () => {
+    expect(parseConflicts('a\n<<<<<<< HEAD\nb\n')).toEqual([{ kind: 'text', text: 'a\n<<<<<<< HEAD\nb\n' }]);
+  });
+});
+
+describe('cleanTemplate', () => {
+  it('drops comment lines and trims', () => {
+    expect(cleanTemplate('# hint\n[robot] \n\nTested on:\n# end\n')).toBe('[robot] \n\nTested on:');
+    expect(cleanTemplate(null)).toBe('');
+  });
+});
+
+describe('parseTrack', () => {
+  it('reads ahead/behind/gone', () => {
+    expect(parseTrack('ahead 2, behind 3')).toEqual({ ahead: 2, behind: 3, gone: false });
+    expect(parseTrack('gone')).toEqual({ ahead: 0, behind: 0, gone: true });
+  });
+});
+
+describe('undo entries', () => {
+  const a = { head: 'aaa', branch: 'main' };
+  const b = { head: 'bbb', branch: 'main' };
+  it('headMove resets between the two commits', () => {
+    expect(headMove('Commit', a, b, 'soft')).toMatchObject({ undo: [{ op: 'reset', args: ['aaa', 'soft'] }], redo: [{ op: 'reset', args: ['bbb', 'soft'] }] });
+  });
+  it('ignores no-ops and branch switches', () => {
+    expect(headMove('Pull', a, a, 'keep')).toBeNull();
+    expect(headMove('x', a, { head: 'bbb', branch: 'other' }, 'keep')).toBeNull();
+    expect(checkoutMove('x', a, a)).toBeNull();
+  });
+  it('branchCreated checks back out before deleting', () => {
+    const e = branchCreated('feat', 'aaa', a, { head: 'aaa', branch: 'feat' });
+    expect(e.undo.map((s) => s.op)).toEqual(['checkout', 'deleteRef']);
+    expect(e.redo.map((s) => s.op)).toEqual(['createRef', 'checkout']);
+  });
+  it('refsDeleted restores every ref', () => {
+    const e = refsDeleted('x', [{ full: 'refs/heads/a', sha: '1' }, { full: 'refs/heads/b', sha: '2' }], a);
+    expect(e.undo).toHaveLength(2);
+    expect(sameHead(e.before, e.after)).toBe(true);
+  });
+});

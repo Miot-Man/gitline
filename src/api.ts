@@ -12,9 +12,11 @@ interface Api {
   showItem(p: string): Promise<void>;
   openPath(p: string): Promise<void>;
   openTerminal(p: string): Promise<void>;
+  openInEditor(repo: string, file?: string, line?: number, command?: string): Promise<void>;
   onRepoChanged(cb: (d: { path: string; gitChanged: boolean }) => void): Unsub;
   onMenu(cb: (cmd: string) => void): Unsub;
   onFocus(cb: () => void): Unsub;
+  setTheme(theme: 'system' | 'light' | 'dark'): Promise<void>;
 }
 
 declare global {

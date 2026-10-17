@@ -22,7 +22,9 @@ contextBridge.exposeInMainWorld('api', {
   showItem: (p) => ipcRenderer.invoke('shell:showItem', p),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
   openTerminal: (p) => ipcRenderer.invoke('shell:terminal', p),
+  openInEditor: (repo, file, line, command) => ipcRenderer.invoke('shell:editor', repo, file, line, command),
   onRepoChanged: (cb) => on('repo-changed', cb),
   onMenu: (cb) => on('menu', cb),
   onFocus: (cb) => on('focus', cb),
+  setTheme: (theme) => ipcRenderer.invoke('theme:set', theme),
 });

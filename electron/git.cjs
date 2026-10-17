@@ -45,6 +45,50 @@ function gitInput(cwd, args, input) {
   });
 }
 
+// Like git(), but returns stdout as a Buffer (for binary blobs).
+function gitBuffer(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, env: ENV, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) =>
+      err ? reject(new Error(stderr.toString().trim() || err.message)) : resolve(stdout)
+    );
+  });
+}
+
+const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif' };
+
+// Apps launched from Finder get a minimal PATH, so look for gh where package managers put it.
+const GH_CANDIDATES = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh', 'C:\\Program Files\\GitHub CLI\\gh.exe'];
+let ghPath;
+function findGh() {
+  if (ghPath !== undefined) return ghPath;
+  ghPath = GH_CANDIDATES.find((p) => fs.existsSync(p)) ?? 'gh';
+  return ghPath;
+}
+
+function gh(cwd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      findGh(),
+      args,
+      { cwd, env: { ...ENV, GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const msg = err.code === 'ENOENT' ? 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com.' : (stderr || stdout || err.message).trim();
+          reject(new Error(msg));
+        } else resolve(stdout);
+      }
+    );
+  });
+}
+
+// Resolves a repo-relative path, refusing anything that escapes the repo.
+function repoFile(cwd, file) {
+  const full = path.resolve(cwd, file);
+  const rel = path.relative(cwd, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`Path is outside the repository: ${file}`);
+  return full;
+}
+
 // Runs an op that may stop on conflicts (merge, rebase, cherry-pick, ...).
 async function conflictAware(cwd, args, env) {
   const r = await git(cwd, args, { allowFail: true, env });
@@ -55,7 +99,8 @@ async function conflictAware(cwd, args, env) {
 }
 
 const exists = (...p) => fs.existsSync(path.join(...p));
-const shellQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+// Quotes a path for git's sh (Git for Windows ships one too, which prefers forward slashes).
+const shellQuote = (s) => `'${s.replace(/\\/g, '/').replace(/'/g, `'\\''`)}'`;
 const lines = (s) => s.split('\n').filter(Boolean);
 
 async function hasHead(cwd) {
@@ -76,6 +121,15 @@ function parseNameStatus(out) {
     }
   }
   return files;
+}
+
+// Collapses a PR's check runs / commit statuses into one state.
+function summarizeChecks(rollup) {
+  if (!rollup.length) return null;
+  const states = rollup.map((c) => (c.conclusion || c.state || c.status || '').toUpperCase());
+  if (states.some((s) => ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(s))) return 'failure';
+  if (states.some((s) => ['PENDING', 'QUEUED', 'IN_PROGRESS', 'EXPECTED', 'WAITING', 'REQUESTED', ''].includes(s))) return 'pending';
+  return 'success';
 }
 
 const ops = {
@@ -331,7 +385,8 @@ const ops = {
     await git(cwd, ['clean', '-fd', '-q']);
   },
   async applyPatch(cwd, patch, cached, reverse) {
-    const args = ['apply', '--whitespace=nowarn'];
+    // --recount: line-level patches are built in the UI without exact hunk header counts.
+    const args = ['apply', '--whitespace=nowarn', '--recount'];
     if (cached) args.push('--cached');
     if (reverse) args.push('--reverse');
     args.push('-');
@@ -460,6 +515,184 @@ const ops = {
     await git(cwd, ['update-ref', '-d', full, sha]);
   },
 
+  // ---- worktrees ----
+  async worktrees(cwd) {
+    const [r, top] = await Promise.all([git(cwd, ['worktree', 'list', '--porcelain']), git(cwd, ['rev-parse', '--show-toplevel'])]);
+    const here = path.resolve(top.stdout.trim());
+    return r.stdout
+      .split(/\n\n+/)
+      .filter((b) => b.startsWith('worktree '))
+      .map((block) => {
+        const wt = { path: '', head: null, branch: null, detached: false, bare: false, locked: false, prunable: false, current: false };
+        for (const line of block.split('\n')) {
+          const [key, ...rest] = line.split(' ');
+          const val = rest.join(' ');
+          if (key === 'worktree') wt.path = val;
+          else if (key === 'HEAD') wt.head = val;
+          else if (key === 'branch') wt.branch = val.replace(/^refs\/heads\//, '');
+          else if (key === 'detached') wt.detached = true;
+          else if (key === 'bare') wt.bare = true;
+          else if (key === 'locked') wt.locked = true;
+          else if (key === 'prunable') wt.prunable = true;
+        }
+        wt.current = path.resolve(wt.path) === here;
+        return wt;
+      });
+  },
+  // Checks out `branch` in a new folder. With `newBranch`, creates that branch from `branch` first.
+  async addWorktree(cwd, dir, branch, newBranch) {
+    await git(cwd, ['worktree', 'add', ...(newBranch ? ['-b', newBranch, dir, branch] : [dir, branch])]);
+    return dir;
+  },
+  async removeWorktree(cwd, dir, force) {
+    await git(cwd, ['worktree', 'remove', ...(force ? ['--force'] : []), dir]);
+  },
+  async pruneWorktrees(cwd) {
+    await git(cwd, ['worktree', 'prune']);
+  },
+
+  // ---- submodules ----
+  async submodules(cwd) {
+    if (!exists(cwd, '.gitmodules')) return [];
+    const r = await git(cwd, ['submodule', 'status', '--recursive'], { allowFail: true });
+    const states = { ' ': 'ok', '-': 'uninitialized', '+': 'modified', U: 'conflict' };
+    return lines(r.stdout).map((l) => {
+      const m = l.match(/^(.)([0-9a-f]+) (\S+)(?: \((.*)\))?$/) ?? [];
+      return { state: states[m[1]] ?? 'ok', sha: m[2] ?? '', path: m[3] ?? l.trim(), describe: m[4] ?? null };
+    });
+  },
+  async updateSubmodules(cwd, sub) {
+    await git(cwd, ['submodule', 'update', '--init', '--recursive', ...(sub ? ['--', sub] : [])]);
+  },
+
+  // ---- Git LFS ----
+  async lfsInfo(cwd) {
+    let attrs = '';
+    try {
+      attrs = fs.readFileSync(path.join(cwd, '.gitattributes'), 'utf8');
+    } catch {}
+    if (!/filter=lfs/.test(attrs)) return { used: false, installed: false, files: 0 };
+    const v = await git(cwd, ['lfs', 'version'], { allowFail: true });
+    if (v.code !== 0) return { used: true, installed: false, files: 0 };
+    const files = await git(cwd, ['lfs', 'ls-files', '--name-only'], { allowFail: true });
+    return { used: true, installed: true, files: lines(files.stdout).length };
+  },
+  async lfsPull(cwd) {
+    await git(cwd, ['lfs', 'pull']);
+  },
+
+  // ---- ignored files ----
+  async ignoredFiles(cwd) {
+    // Traditional mode lists an ignored directory once instead of every file inside it.
+    const r = await git(cwd, ['status', '--porcelain=v1', '-z', '--ignored=traditional', '-unormal']);
+    return r.stdout
+      .split('\0')
+      .filter((e) => e.startsWith('!! '))
+      .map((e) => e.slice(3));
+  },
+
+  // An image as a data: URL. `rev` is a commit, ':' for the index, or null for the working copy.
+  // Returns null when the file doesn't exist on that side.
+  async imageData(cwd, rev, file) {
+    const type = IMAGE_TYPES[path.extname(file).slice(1).toLowerCase()];
+    if (!type) return null;
+    let buf;
+    try {
+      if (rev === null) buf = fs.readFileSync(repoFile(cwd, file));
+      else buf = await gitBuffer(cwd, ['show', rev === ':' ? `:${file}` : `${rev}:${file}`]);
+    } catch {
+      return null;
+    }
+    return { url: `data:${type};base64,${buf.toString('base64')}`, size: buf.length };
+  },
+
+  // ---- conflict editing ----
+  async readFile(cwd, file) {
+    return fs.readFileSync(repoFile(cwd, file), 'utf8');
+  },
+  async writeFile(cwd, file, content) {
+    fs.writeFileSync(repoFile(cwd, file), content);
+  },
+
+  // ---- config / identity ----
+  // Global config is read from the home directory so it works without a repository.
+  async getConfig(cwd, key, scope) {
+    if (scope === 'global') cwd = os.homedir();
+    const r = await git(cwd, ['config', ...(scope ? [`--${scope}`] : []), '--get', key], { allowFail: true });
+    return r.stdout.trim() || null;
+  },
+  async setConfig(cwd, key, value, scope) {
+    if (scope === 'global') cwd = os.homedir();
+    const s = scope ? [`--${scope}`] : [];
+    if (value === null || value === '') await git(cwd, ['config', ...s, '--unset', key], { allowFail: true });
+    else await git(cwd, ['config', ...s, key, value]);
+  },
+  // The file named by commit.template, if one is configured.
+  async commitTemplate(cwd) {
+    const r = await git(cwd, ['config', '--path', '--get', 'commit.template'], { allowFail: true });
+    const file = r.stdout.trim();
+    if (!file) return null;
+    try {
+      return fs.readFileSync(path.resolve(cwd, file.replace(/^~(?=\/)/, os.homedir())), 'utf8');
+    } catch {
+      return null;
+    }
+  },
+  // Distinct authors seen in recent history, most frequent first.
+  async authors(cwd) {
+    const r = await git(cwd, ['log', '--all', '-n', '3000', '--format=%an%x1f%ae'], { allowFail: true });
+    const counts = new Map();
+    for (const l of lines(r.stdout)) counts.set(l, (counts.get(l) ?? 0) + 1);
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([l]) => {
+        const [name, email] = l.split(SEP);
+        return { name, email };
+      });
+  },
+
+  // ---- GitHub (via the gh CLI) ----
+  async ghStatus(cwd) {
+    const remotes = (await git(cwd, ['remote', '-v'])).stdout;
+    if (!/github\.com[:/]/.test(remotes)) return { ok: false, reason: 'No GitHub remote' };
+    try {
+      await gh(cwd, ['auth', 'status', '--hostname', 'github.com']);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: /not installed/.test(e.message) ? e.message : 'Not signed in to GitHub. Run `gh auth login` in a terminal.' };
+    }
+  },
+  async ghPrs(cwd) {
+    const fields = 'number,title,headRefName,baseRefName,author,url,isDraft,reviewDecision,statusCheckRollup,isCrossRepository';
+    const out = await gh(cwd, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', fields]);
+    return JSON.parse(out).map((p) => ({
+      number: p.number,
+      title: p.title,
+      head: p.headRefName,
+      base: p.baseRefName,
+      author: p.author?.login ?? '',
+      url: p.url,
+      draft: p.isDraft,
+      review: p.reviewDecision || null,
+      fork: p.isCrossRepository,
+      checks: summarizeChecks(p.statusCheckRollup ?? []),
+    }));
+  },
+  async ghCreatePr(cwd, head, base, title, body, draft) {
+    const out = await gh(cwd, ['pr', 'create', '--head', head, '--base', base, '--title', title, '--body', body ?? '', ...(draft ? ['--draft'] : [])]);
+    return out.trim().split('\n').pop();
+  },
+  async ghCheckoutPr(cwd, number) {
+    await gh(cwd, ['pr', 'checkout', String(number)]);
+  },
+  async ghDefaultBranch(cwd) {
+    try {
+      return (await gh(cwd, ['repo', 'view', '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name'])).trim() || null;
+    } catch {
+      return null;
+    }
+  },
+
   // ---- tags ----
   async createTag(cwd, name, sha, message) {
     if (message) await git(cwd, ['tag', '-a', name, '-m', message, sha]);
@@ -483,8 +716,30 @@ const ops = {
   },
 
   // ---- remotes ----
+  // Fetches everything and reports remote branches that gained commits from other people.
   async fetch(cwd) {
+    const snapshot = async () =>
+      new Map(lines((await git(cwd, ['for-each-ref', '--format=%(refname)%1f%(objectname)', 'refs/remotes'])).stdout).map((l) => l.split(SEP)));
+    const before = await snapshot();
     await git(cwd, ['fetch', '--all', '--prune', '--tags']);
+    const after = await snapshot();
+    // First fetch of a fresh clone: everything is "new", which isn't news.
+    if (!before.size) return [];
+    const me = (await git(cwd, ['config', 'user.email'], { allowFail: true })).stdout.trim().toLowerCase();
+    const report = [];
+    for (const [ref, sha] of after) {
+      const old = before.get(ref);
+      if (old === sha || ref.endsWith('/HEAD')) continue;
+      // A new branch only counts commits that aren't on any other remote branch.
+      const others = [...after].filter(([r]) => r !== ref).map(([, v]) => v);
+      const range = old ? [`${old}..${sha}`] : [sha, '--not', ...before.values(), ...others];
+      const r = await git(cwd, ['log', '-n', '500', '--format=%an%x1f%ae', ...range, '--'], { allowFail: true });
+      const theirs = lines(r.stdout)
+        .map((l) => l.split(SEP))
+        .filter(([, email]) => email.toLowerCase() !== me);
+      if (theirs.length) report.push({ ref: ref.replace(/^refs\/remotes\//, ''), count: theirs.length, authors: [...new Set(theirs.map(([name]) => name))], isNew: !old });
+    }
+    return report;
   },
   pull(cwd, mode) {
     const flag = { ff: '--no-rebase', 'ff-only': '--ff-only', rebase: '--rebase' }[mode] || '--no-rebase';

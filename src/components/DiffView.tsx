@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { X, Columns2, Rows3 } from 'lucide-react';
 import type { DiffTarget } from '../types';
 import { git } from '../api';
-import { parseDiff, type DiffLine, type Hunk } from '../lib/diff';
+import { buildLinePatch, parseDiff, type DiffLine, type Hunk } from '../lib/diff';
 import { StatusIcon } from './RightPanel';
+import { IMAGE_EXT, ImageDiff, type ImageSide } from './ImageDiff';
 
 interface Props {
   repo: string;
@@ -22,6 +23,8 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [split, setSplit] = useState(() => localStorage.getItem('diffSplit') === '1');
+  // Selected +/- lines for line-level staging; only one hunk at a time.
+  const [sel, setSel] = useState<{ hunk: number; lines: Set<number>; anchor: number } | null>(null);
   const file = target.file;
 
   useEffect(() => {
@@ -46,11 +49,38 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
   }, [onClose]);
 
   const parsed = useMemo(() => (text === null ? null : parseDiff(text)), [text]);
+  useEffect(() => setSel(null), [text]);
   const isWip = target.kind === 'wip';
   const staged = isWip && target.staged;
   const untracked = file.status === '?';
   const hunkActions = isWip && !untracked && file.status !== 'U' && parsed && !parsed.combined && !parsed.binary;
   const totalLines = parsed ? parsed.hunks.reduce((n, h) => n + h.lines.length, 0) : 0;
+
+  // Binary images get a before / after view instead of "no text diff".
+  const image = parsed?.binary && IMAGE_EXT.test(file.path) ? imageSides(target) : null;
+
+  // Click toggles a line; shift-click selects every change line between the anchor and here.
+  const selectLine = (hunk: number, line: number, shift: boolean) => {
+    const lines = parsed!.hunks[hunk].lines;
+    if (lines[line].type !== 'add' && lines[line].type !== 'del') return;
+    setSel((cur) => {
+      if (shift && cur && cur.hunk === hunk) {
+        const next = new Set(cur.lines);
+        const [a, b] = [Math.min(cur.anchor, line), Math.max(cur.anchor, line)];
+        for (let i = a; i <= b; i++) if (lines[i].type === 'add' || lines[i].type === 'del') next.add(i);
+        return { ...cur, lines: next };
+      }
+      const next = new Set(cur && cur.hunk === hunk ? cur.lines : []);
+      next.has(line) ? next.delete(line) : next.add(line);
+      return next.size ? { hunk, lines: next, anchor: line } : null;
+    });
+  };
+
+  const applyLines = (h: Hunk, cached: boolean, reverse: boolean) => {
+    if (!sel || !parsed) return;
+    onApplyHunk(buildLinePatch(parsed.header, h, sel.lines, reverse), cached, reverse);
+    setSel(null);
+  };
 
   const toggleSplit = () => {
     setSplit((s) => {
@@ -99,7 +129,8 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
       <div className="diff-body">
         {error && <div className="diff-message">{error}</div>}
         {!error && parsed === null && <div className="diff-message">Loading…</div>}
-        {parsed && parsed.binary && <div className="diff-message">Binary file — no text diff available.</div>}
+        {image && <ImageDiff repo={repo} before={image.before} after={image.after} version={version} />}
+        {parsed && parsed.binary && !image && <div className="diff-message">Binary file — no text diff available.</div>}
         {parsed && !parsed.binary && parsed.hunks.length === 0 && (
           <div className="diff-message">{text?.trim() ? <pre>{text}</pre> : 'No changes (file mode change or empty file).'}</div>
         )}
@@ -110,7 +141,27 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
             <div className="hunk" key={i}>
               <div className="hunk-header">
                 <code>{h.header}</code>
-                {hunkActions && (
+                {hunkActions && sel?.hunk === i ? (
+                  <span className="hunk-actions">
+                    <button className="btn btn-xs" onClick={() => setSel(null)}>
+                      Clear
+                    </button>
+                    {!staged && (
+                      <button className="btn btn-xs btn-danger-ghost" onClick={() => applyLines(h, false, true)}>
+                        Discard {sel.lines.size} line{sel.lines.size === 1 ? '' : 's'}
+                      </button>
+                    )}
+                    {!staged ? (
+                      <button className="btn btn-xs btn-stage" onClick={() => applyLines(h, true, false)}>
+                        Stage {sel.lines.size} line{sel.lines.size === 1 ? '' : 's'}
+                      </button>
+                    ) : (
+                      <button className="btn btn-xs btn-unstage" onClick={() => applyLines(h, true, true)}>
+                        Unstage {sel.lines.size} line{sel.lines.size === 1 ? '' : 's'}
+                      </button>
+                    )}
+                  </span>
+                ) : hunkActions && (
                   <span className="hunk-actions">
                     {!staged && (
                       <button className="btn btn-xs btn-danger-ghost" onClick={() => onApplyHunk(parsed.header + h.raw, false, true)}>
@@ -129,12 +180,36 @@ export function DiffView({ repo, target, version, onClose, onStageFile, onUnstag
                   </span>
                 )}
               </div>
-              {split ? <SplitHunk lines={h.lines} /> : <UnifiedHunk lines={h.lines} />}
+              {split ? (
+                <SplitHunk lines={h.lines} />
+              ) : (
+                <UnifiedHunk
+                  lines={h.lines}
+                  selected={sel?.hunk === i ? sel.lines : undefined}
+                  onSelect={hunkActions ? (line, shift) => selectLine(i, line, shift) : undefined}
+                />
+              )}
             </div>
           ))}
       </div>
     </div>
   );
+}
+
+function imageSides(target: DiffTarget): { before: ImageSide | null; after: ImageSide | null } {
+  const f = target.file;
+  const oldPath = f.oldPath ?? f.path;
+  const added = f.status === 'A' || f.status === '?';
+  const deleted = f.status === 'D';
+  if (target.kind === 'wip') {
+    return target.staged
+      ? { before: added ? null : { rev: 'HEAD', path: oldPath }, after: deleted ? null : { rev: ':', path: f.path } }
+      : { before: added ? null : { rev: ':', path: f.path }, after: deleted ? null : { rev: null, path: f.path } };
+  }
+  return {
+    before: added ? null : { rev: target.parent ?? `${target.sha}^`, path: oldPath },
+    after: deleted ? null : { rev: target.sha, path: f.path },
+  };
 }
 
 function limitHunks(hunks: Hunk[]) {
@@ -150,7 +225,7 @@ function limitHunks(hunks: Hunk[]) {
 
 const sign = (t: DiffLine['type']) => (t === 'add' ? '+' : t === 'del' ? '-' : ' ');
 
-function UnifiedHunk({ lines }: { lines: DiffLine[] }) {
+function UnifiedHunk({ lines, selected, onSelect }: { lines: DiffLine[]; selected?: Set<number>; onSelect?: (line: number, shift: boolean) => void }) {
   return (
     <table className="diff-table">
       <tbody>
@@ -162,9 +237,17 @@ function UnifiedHunk({ lines }: { lines: DiffLine[] }) {
               <td className="code">{l.text}</td>
             </tr>
           ) : (
-            <tr key={i} className={`dl-${l.type}`}>
-              <td className="ln">{l.oldNo ?? ''}</td>
-              <td className="ln">{l.newNo ?? ''}</td>
+            <tr
+              key={i}
+              className={`dl-${l.type}${selected?.has(i) ? ' dl-selected' : ''}${onSelect && l.type !== 'ctx' ? ' selectable' : ''}`}
+              title={onSelect && l.type !== 'ctx' ? 'Click to select this line, shift-click for a range' : undefined}
+            >
+              <td className="ln" onMouseDown={(e) => onSelect && (e.preventDefault(), onSelect(i, e.shiftKey))}>
+                {l.oldNo ?? ''}
+              </td>
+              <td className="ln" onMouseDown={(e) => onSelect && (e.preventDefault(), onSelect(i, e.shiftKey))}>
+                {l.newNo ?? ''}
+              </td>
               <td className="code">
                 <span className="sign">{sign(l.type)}</span>
                 {l.text}

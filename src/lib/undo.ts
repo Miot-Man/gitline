@@ -76,3 +76,13 @@ export function branchRenamed(from: string, to: string, before: HeadState, after
     redo: [step('renameBranch', from, to)],
   };
 }
+
+export function refsDeleted(label: string, deleted: { full: string; sha: string }[], state: HeadState): UndoEntry {
+  return {
+    label,
+    before: state,
+    after: state,
+    undo: deleted.map((d) => step('createRef', d.full, d.sha)),
+    redo: deleted.map((d) => step('deleteRef', d.full, d.sha)),
+  };
+}

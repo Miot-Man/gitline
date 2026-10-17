@@ -18,12 +18,13 @@ interface Props {
   onMode: (m: FileViewMode) => void;
   onClose: () => void;
   onSelectSha: (sha: string) => void;
+  onOpenInEditor: (line?: number) => void;
 }
 
 const UNCOMMITTED = '0'.repeat(40);
 const noop = () => {};
 
-export function FileHistory({ repo, path, mode, rev, version, onMode, onClose, onSelectSha }: Props) {
+export function FileHistory({ repo, path, mode, rev, version, onMode, onClose, onSelectSha, onOpenInEditor }: Props) {
   useEffect(() => {
     if (mode !== 'blame') return; // the history pane's DiffView handles Escape itself
     const onKey = (e: KeyboardEvent) => {
@@ -54,7 +55,7 @@ export function FileHistory({ repo, path, mode, rev, version, onMode, onClose, o
       {mode === 'history' ? (
         <HistoryPane repo={repo} path={path} version={version} onClose={onClose} />
       ) : (
-        <BlamePane repo={repo} path={path} rev={rev} version={version} onSelectSha={onSelectSha} />
+        <BlamePane repo={repo} path={path} rev={rev} version={version} onSelectSha={onSelectSha} onOpenLine={onOpenInEditor} />
       )}
     </div>
   );
@@ -120,7 +121,21 @@ function HistoryPane({ repo, path, version, onClose }: { repo: string; path: str
   );
 }
 
-function BlamePane({ repo, path, rev, version, onSelectSha }: { repo: string; path: string; rev?: string; version: number; onSelectSha: (sha: string) => void }) {
+function BlamePane({
+  repo,
+  path,
+  rev,
+  version,
+  onSelectSha,
+  onOpenLine,
+}: {
+  repo: string;
+  path: string;
+  rev?: string;
+  version: number;
+  onSelectSha: (sha: string) => void;
+  onOpenLine: (line: number) => void;
+}) {
   const [blame, setBlame] = useState<Blame | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
@@ -163,6 +178,8 @@ function BlamePane({ repo, path, rev, version, onSelectSha }: { repo: string; pa
                 key={i}
                 className={`${first ? 'blame-first' : ''}${hover === l.sha ? ' blame-hover' : ''}`}
                 onMouseEnter={() => setHover(l.sha)}
+                onDoubleClick={() => onOpenLine(i + 1)}
+                title="Double-click to open this line in your editor"
               >
                 <td
                   className="blame-gutter"

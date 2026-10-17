@@ -5,6 +5,7 @@ import { WIP } from '../types';
 import type { GraphRow } from '../lib/graph';
 import { RESERVED, laneColor } from '../lib/graph';
 import { formatDate, initials } from '../lib/format';
+import { refDragProps } from './Sidebar';
 
 export const ROW_H = 32;
 const LANE_W = 24;
@@ -51,6 +52,9 @@ interface Props {
   onCompare: (sha: string) => void;
   onSearch: (mode: Exclude<SearchMode, 'message'>, query: string) => Promise<string[]>;
   filterNote: React.ReactNode;
+  onRefDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void;
+  canLoadMore: boolean;
+  onLoadMore: () => void;
 }
 
 export type SearchMode = 'message' | 'changes' | 'path';
@@ -291,7 +295,7 @@ export function CommitGraph(props: Props) {
         <div className="col-refs" style={{ width: refW }}>
           {pills.length > 0 && (
             <>
-              <RefPill pill={pills[0]} color={color} onMenu={props.onRefMenu} onDouble={props.onRefDoubleClick} />
+              <RefPill pill={pills[0]} color={color} onMenu={props.onRefMenu} onDouble={props.onRefDoubleClick} onDrop={props.onRefDrop} />
               {pills.length > 1 && (
                 <span className="pill-more" style={{ borderColor: color }} title={pills.slice(1).map((p) => p.label).join('\n')}>
                   +{pills.length - 1}
@@ -407,7 +411,16 @@ export function CommitGraph(props: Props) {
       </div>
       {props.filterNote && <div className="graph-filter-note">{props.filterNote}</div>}
       <div className="graph-scroll" ref={scrollRef} tabIndex={0} onKeyDown={onKeyDown} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
-        <div style={{ height: items.length * ROW_H, position: 'relative' }}>{rows}</div>
+        <div style={{ height: items.length * ROW_H + (props.canLoadMore ? ROW_H * 2 : 0), position: 'relative' }}>
+          {rows}
+          {props.canLoadMore && (
+            <div className="load-more" style={{ top: items.length * ROW_H }}>
+              <button className="btn btn-sm" onClick={props.onLoadMore}>
+                Load more commits
+              </button>
+            </div>
+          )}
+        </div>
         {items.length === 0 && <div className="empty-graph">No commits yet. Stage some files and make your first commit.</div>}
       </div>
     </div>
@@ -419,13 +432,16 @@ function RefPill({
   color,
   onMenu,
   onDouble,
+  onDrop,
 }: {
   pill: Pill;
   color: string;
   onMenu: (e: React.MouseEvent, r: Ref) => void;
   onDouble: (r: Ref) => void;
+  onDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void;
 }) {
   const primary = pill.local ?? pill.tag ?? pill.remotes[0];
+  const drag = primary ? refDragProps(primary, onDrop) : {};
   return (
     <span
       className={`ref-pill${pill.isHead ? ' head' : ''}`}
@@ -442,6 +458,7 @@ function RefPill({
         e.stopPropagation();
         if (primary) onDouble(primary);
       }}
+      {...drag}
     >
       {pill.isHead && pill.local && <Check size={12} className="pill-check" />}
       <span className="pill-label">{pill.label}</span>

@@ -66,3 +66,59 @@ export function parseDiff(text: string): ParsedDiff {
   finish();
   return { header: headerLines.join('\n') + '\n', hunks, binary, combined };
 }
+
+// Builds a one-hunk patch containing only the selected +/- lines (indices into hunk.lines).
+// Unselected changes become context or are dropped so the patch applies to the right side:
+//   forward (stage): unselected '-' lines stay as context, unselected '+' lines are dropped;
+//   reverse (unstage / discard, applied with --reverse): unselected '+' lines stay, unselected '-' are dropped.
+// Each change block (a run of '-' then '+') is reordered so kept lines land where they were:
+// context that sits after the first selected line moves past the other side's lines.
+// Hunk counts are left out; the patch is applied with `git apply --recount`.
+export function buildLinePatch(fileHeader: string, hunk: Hunk, selected: Set<number>, reverse: boolean): string {
+  // Attach "\ No newline at end of file" markers to the line they follow.
+  const items: { line: DiffLine; idx: number; noEol: boolean }[] = [];
+  hunk.lines.forEach((l, i) => {
+    if (l.type === 'meta') {
+      if (items.length) items[items.length - 1].noEol = true;
+    } else items.push({ line: l, idx: i, noEol: false });
+  });
+
+  const out: string[] = [];
+  const emit = (it: (typeof items)[number], prefix: string) => {
+    out.push(prefix + it.line.text);
+    if (it.noEol) out.push('\\ No newline at end of file');
+  };
+
+  for (let i = 0; i < items.length; ) {
+    if (items[i].line.type === 'ctx') {
+      emit(items[i++], ' ');
+      continue;
+    }
+    const dels: typeof items = [];
+    const adds: typeof items = [];
+    while (i < items.length && items[i].line.type === 'del') dels.push(items[i++]);
+    while (i < items.length && items[i].line.type === 'add') adds.push(items[i++]);
+    const sel = (it: (typeof items)[number]) => selected.has(it.idx);
+
+    if (!reverse) {
+      const first = dels.findIndex(sel);
+      const pre = first < 0 ? dels : dels.slice(0, first);
+      const rest = first < 0 ? [] : dels.slice(first);
+      pre.forEach((d) => emit(d, ' '));
+      rest.filter(sel).forEach((d) => emit(d, '-'));
+      adds.filter(sel).forEach((a) => emit(a, '+'));
+      rest.filter((d) => !sel(d)).forEach((d) => emit(d, ' '));
+    } else {
+      const first = adds.findIndex(sel);
+      const pre = first < 0 ? adds : adds.slice(0, first);
+      const rest = first < 0 ? [] : adds.slice(first);
+      pre.forEach((a) => emit(a, ' '));
+      dels.filter(sel).forEach((d) => emit(d, '-'));
+      rest.forEach((a) => emit(a, sel(a) ? '+' : ' '));
+    }
+  }
+
+  const m = hunk.header.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+  const header = m ? `@@ -${m[1]} +${m[2]} @@${m[3]}` : hunk.header;
+  return `${fileHeader}${header}\n${out.join('\n')}\n`;
+}

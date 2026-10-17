@@ -1,6 +1,7 @@
+import { shortcut } from '../lib/settings';
 import { useEffect, useState } from 'react';
-import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal, X, ArrowUpDown } from 'lucide-react';
-import type { Commit, CommitDetails, FileChange, RepoInfo, Status } from '../types';
+import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash2, FileQuestion, GitCommitHorizontal, X, ArrowUpDown, Users, ChevronDown, ChevronRight, EyeOff } from 'lucide-react';
+import type { Author, Commit, CommitDetails, FileChange, RepoInfo, Status } from '../types';
 import { git } from '../api';
 import { authorColor, formatDate, relativeTime, splitPath } from '../lib/format';
 import { Avatar } from './ui';
@@ -76,6 +77,12 @@ interface StagingProps {
   onAbort: () => void;
   onContinue: () => void;
   onSkip: () => void;
+  behind: { count: number; upstream: string } | null;
+  onPull: () => void;
+  coAuthors: Author[];
+  onCoAuthorMenu: (e: React.MouseEvent) => void;
+  onRemoveCoAuthor: (a: Author) => void;
+  onIgnoredMenu: (e: React.MouseEvent, path: string) => void;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -87,6 +94,20 @@ const STATE_LABEL: Record<string, string> = {
 
 export function StagingPanel(p: StagingProps) {
   const { status, info } = p;
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [ignored, setIgnored] = useState<string[] | null>(null);
+
+  // Ignored files are only listed on demand; the list can be slow in big repos.
+  useEffect(() => {
+    if (!showIgnored) return;
+    let alive = true;
+    git<string[]>('ignoredFiles', p.repo)
+      .then((l) => alive && setIgnored(l))
+      .catch(() => alive && setIgnored([]));
+    return () => {
+      alive = false;
+    };
+  }, [showIgnored, p.repo, status]);
   const total = new Set([...status.staged, ...status.unstaged, ...status.conflicted].map((f) => f.path)).size;
   const canCommit = (status.staged.length > 0 || p.amend || (info.state === 'merge' && status.conflicted.length === 0)) && p.summary.trim().length > 0;
   const commitLabel =
@@ -225,6 +246,29 @@ export function StagingPanel(p: StagingProps) {
             ))}
           </div>
         </div>
+
+        <div className="file-section">
+          <div className="file-section-header clickable" onClick={() => setShowIgnored((v) => !v)}>
+            <span>
+              {showIgnored ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Ignored Files{showIgnored && ignored ? ` (${ignored.length})` : ''}
+            </span>
+          </div>
+          {showIgnored && (
+            <div className="file-list">
+              {!ignored && <div className="side-note">Loading…</div>}
+              {ignored?.map((f) => (
+                <div key={f} className="file-row ignored" title={f} onContextMenu={(e) => p.onIgnoredMenu(e, f)}>
+                  <EyeOff size={13} className="st" />
+                  {/* bdi keeps the trailing slash of ignored folders on the right inside the rtl path box */}
+                  <span className="file-path">
+                    <bdi className="file-name">{f}</bdi>
+                  </span>
+                </div>
+              ))}
+              {ignored?.length === 0 && <div className="side-note">Nothing is ignored</div>}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="commit-box">
@@ -232,11 +276,26 @@ export function StagingPanel(p: StagingProps) {
           <span>
             <GitCommitHorizontal size={14} /> Commit
           </span>
-          <label className="checkbox">
-            <input type="checkbox" checked={p.amend} onChange={(e) => p.setAmend(e.target.checked)} disabled={!info.head} />
-            Amend
-          </label>
+          <span className="commit-box-tools">
+            <button className="icon-btn" title="Add co-authors" onClick={p.onCoAuthorMenu}>
+              <Users size={14} />
+            </button>
+            <label className="checkbox">
+              <input type="checkbox" checked={p.amend} onChange={(e) => p.setAmend(e.target.checked)} disabled={!info.head} />
+              Amend
+            </label>
+          </span>
         </div>
+        {p.behind && (
+          <div className="behind-banner">
+            <span>
+              <b>{p.behind.upstream}</b> has {p.behind.count} commit{p.behind.count === 1 ? '' : 's'} you don't have. Pull first to avoid a merge later.
+            </span>
+            <button className="btn btn-xs btn-primary" onClick={p.onPull}>
+              Pull
+            </button>
+          </div>
+        )}
         <div className="summary-wrap">
           <input
             className="summary"
@@ -258,7 +317,20 @@ export function StagingPanel(p: StagingProps) {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) p.onCommit();
           }}
         />
-        <button className="btn btn-commit" disabled={!canCommit} onClick={p.onCommit} title="⌘/Ctrl + Enter">
+        {p.coAuthors.length > 0 && (
+          <div className="coauthors">
+            <span className="muted">Co-authored by</span>
+            {p.coAuthors.map((a) => (
+              <span key={a.email} className="coauthor" title={a.email}>
+                {a.name}
+                <button className="icon-btn" onClick={() => p.onRemoveCoAuthor(a)}>
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <button className="btn btn-commit" disabled={!canCommit} onClick={p.onCommit} title={shortcut('Enter')}>
           {commitLabel}
         </button>
       </div>

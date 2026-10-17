@@ -3,6 +3,8 @@ import { FolderOpen, Download, FolderPlus, X, GitBranch, Loader2 } from 'lucide-
 import { api, basename, cleanError, git, joinPath } from '../api';
 import { useUI } from './ui';
 
+const FOLDER_HINT = api.platform === 'win32' ? 'C:\\Users\\you\\code' : api.platform === 'darwin' ? '/Users/you/code' : '/home/you/code';
+
 interface Props {
   onOpen: (path: string) => void;
   mode: 'home' | 'clone' | 'init';
@@ -141,7 +143,7 @@ function CloneForm({ onDone, onCancel }: { onDone: (p: string) => void; onCancel
       <label className="field">
         <span>Where to clone to</span>
         <div className="field-row">
-          <input value={parent} placeholder="/Users/you/code" onChange={(e) => setParent(e.target.value)} />
+          <input value={parent} placeholder={FOLDER_HINT} onChange={(e) => setParent(e.target.value)} />
           <button className="btn" onClick={browse}>
             Browse
           </button>
@@ -205,7 +207,7 @@ function InitForm({ onDone, onCancel }: { onDone: (p: string) => void; onCancel:
       <label className="field">
         <span>Initialize in</span>
         <div className="field-row">
-          <input value={parent} placeholder="/Users/you/code" onChange={(e) => setParent(e.target.value)} />
+          <input value={parent} placeholder={FOLDER_HINT} onChange={(e) => setParent(e.target.value)} />
           <button
             className="btn"
             onClick={async () => {

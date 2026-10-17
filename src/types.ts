@@ -104,3 +104,50 @@ export interface RebaseCommit {
   time: number;
   message: string;
 }
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  head: string;
+  base: string;
+  author: string;
+  url: string;
+  draft: boolean;
+  review: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  fork: boolean;
+  checks: 'success' | 'failure' | 'pending' | null;
+}
+
+export interface GhStatus {
+  ok: boolean;
+  reason?: string;
+}
+
+export interface Author {
+  name: string;
+  email: string;
+}
+
+export interface Worktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  prunable: boolean;
+  current: boolean;
+}
+
+export interface Submodule {
+  path: string;
+  sha: string;
+  state: 'ok' | 'uninitialized' | 'modified' | 'conflict';
+  describe: string | null;
+}
+
+export interface LfsInfo {
+  used: boolean;
+  installed: boolean;
+  files: number;
+}

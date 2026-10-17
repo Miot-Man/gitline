@@ -1,0 +1,16 @@
+# Global git config used by the test suites, so results don't depend on the machine's own config.
+[user]
+	name = Test User
+	email = test@example.com
+[init]
+	defaultBranch = main
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
+[core]
+	autocrlf = false
+[protocol "file"]
+	allow = always
+[advice]
+	detachedHead = false

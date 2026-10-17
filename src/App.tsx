@@ -5,6 +5,8 @@ import { UIProvider, useUI } from './components/ui';
 import { RepoView } from './components/RepoView';
 import { Welcome } from './components/Welcome';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
+import { SettingsDialog } from './components/SettingsDialog';
+import { shortcut, useSettings } from './lib/settings';
 
 interface Tab {
   id: number;
@@ -12,6 +14,9 @@ interface Tab {
 }
 
 type WelcomeMode = 'home' | 'clone' | 'init';
+
+// Shortens home-folder paths on macOS, Linux and Windows.
+const tildify = (p: string) => p.replace(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~');
 
 const NON_TEXT_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'];
 const isTextField = (el: Element | null) =>
@@ -27,13 +32,30 @@ function loadTabs(): { tabs: Tab[]; active: number } {
   return { tabs: [{ id: 1, path: null }], active: 1 };
 }
 
+// Applies the theme from Settings, following the OS when set to System.
+function useTheme() {
+  const { theme } = useSettings();
+  useEffect(() => {
+    api.setTheme(theme);
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      document.documentElement.dataset.theme = theme === 'system' ? (mq.matches ? 'dark' : 'light') : theme;
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [theme]);
+}
+
 function Shell() {
   const ui = useUI();
+  useTheme();
   const [{ tabs, active }, setState] = useState(loadTabs);
   const [welcomeMode, setWelcomeMode] = useState<WelcomeMode>('home');
   const [command, setCommand] = useState<{ name: string; n: number } | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const stateRef = useRef({ tabs, active });
   stateRef.current = { tabs, active };
 
@@ -108,6 +130,8 @@ function Shell() {
             return newTab('init');
           case 'close-tab':
             return closeTab(stateRef.current.active);
+          case 'settings':
+            return setSettingsOpen(true);
           default:
             setCommand({ name: cmd, n: Date.now() });
         }
@@ -119,11 +143,11 @@ function Shell() {
     const pos = { clientX: e.clientX, clientY: e.clientY };
     const recent = (await api.recent.get()).slice(0, 10);
     ui.menu(pos, [
-      ...recent.map((p) => ({ label: basename(p), hint: p.replace(/^\/Users\/[^/]+/, '~'), onClick: () => openRepo(p) })),
+      ...recent.map((p) => ({ label: basename(p), hint: tildify(p), onClick: () => openRepo(p) })),
       'sep' as const,
-      { label: 'Open repository…', hint: '⌘O', onClick: openDialog },
-      { label: 'Clone repository…', hint: '⌘N', onClick: () => newTab('clone') },
-      { label: 'Init repository…', hint: '⌘I', onClick: () => newTab('init') },
+      { label: 'Open repository…', hint: shortcut('O'), onClick: openDialog },
+      { label: 'Clone repository…', hint: shortcut('N'), onClick: () => newTab('clone') },
+      { label: 'Init repository…', hint: shortcut('I'), onClick: () => newTab('init') },
     ]);
   };
 
@@ -140,12 +164,13 @@ function Shell() {
       })),
     ...recent
       .filter((p) => p !== activeTab?.path)
-      .map((p) => ({ id: `recent:${p}`, group: 'Open', label: `Open ${basename(p)}`, hint: p.replace(/^\/Users\/[^/]+/, '~'), run: () => openRepo(p) })),
-    { id: 'app:open', group: 'Repo', label: 'Open repository…', hint: '⌘O', run: openDialog },
-    { id: 'app:clone', group: 'Repo', label: 'Clone repository…', hint: '⌘N', run: () => newTab('clone') },
-    { id: 'app:init', group: 'Repo', label: 'Init repository…', hint: '⌘I', run: () => newTab('init') },
-    { id: 'app:new-tab', group: 'Tab', label: 'New tab', hint: '⌘T', run: () => newTab() },
-    { id: 'app:close-tab', group: 'Tab', label: 'Close tab', hint: '⌘W', run: () => closeTab(active) },
+      .map((p) => ({ id: `recent:${p}`, group: 'Open', label: `Open ${basename(p)}`, hint: tildify(p), run: () => openRepo(p) })),
+    { id: 'app:open', group: 'Repo', label: 'Open repository…', hint: shortcut('O'), run: openDialog },
+    { id: 'app:clone', group: 'Repo', label: 'Clone repository…', hint: shortcut('N'), run: () => newTab('clone') },
+    { id: 'app:init', group: 'Repo', label: 'Init repository…', hint: shortcut('I'), run: () => newTab('init') },
+    { id: 'app:settings', group: 'App', label: 'Settings…', hint: shortcut(','), run: () => setSettingsOpen(true) },
+    { id: 'app:new-tab', group: 'Tab', label: 'New tab', hint: shortcut('T'), run: () => newTab() },
+    { id: 'app:close-tab', group: 'Tab', label: 'Close tab', hint: shortcut('W'), run: () => closeTab(active) },
   ];
 
   return (
@@ -170,7 +195,7 @@ function Shell() {
             </button>
           </div>
         ))}
-        <button className="tab-new" onClick={() => newTab()} title="New tab (⌘T)">
+        <button className="tab-new" onClick={() => newTab()} title={`New tab (${shortcut('T')})`}>
           <Plus size={14} />
         </button>
       </div>
@@ -184,12 +209,14 @@ function Shell() {
               command={t.id === active ? command : null}
               onRepoMenu={repoMenu}
               appCommands={appCommands}
+              onOpenRepo={openRepo}
             />
           ) : null
         )}
         {activeTab && !activeTab.path && <Welcome onOpen={openRepo} mode={welcomeMode} setMode={setWelcomeMode} />}
       </div>
       {paletteOpen && <CommandPalette commands={appCommands} onClose={() => setPaletteOpen(false)} />}
+      {settingsOpen && <SettingsDialog repo={activeTab?.path ?? null} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

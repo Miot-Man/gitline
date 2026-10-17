@@ -1,5 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Commit, CommitDetails, DiffTarget, FileChange, GraphFilter, OpResult, RebaseCommit, Ref, RepoInfo, Stash, Status } from '../types';
+import type {
+  Author,
+  Commit,
+  CommitDetails,
+  DiffTarget,
+  FileChange,
+  GhStatus,
+  GraphFilter,
+  LfsInfo,
+  OpResult,
+  PullRequest,
+  RebaseCommit,
+  Ref,
+  RepoInfo,
+  Stash,
+  Status,
+  Submodule,
+  Worktree,
+} from '../types';
 import { WIP } from '../types';
 import { api, basename, cleanError, git, joinPath } from '../api';
 import { computeGraph } from '../lib/graph';
@@ -12,6 +30,9 @@ import { CommitPanel, ComparePanel, StagingPanel } from './RightPanel';
 import { DiffView } from './DiffView';
 import { FileHistory, type FileViewMode } from './FileHistory';
 import { InteractiveRebase, type RebaseStep } from './InteractiveRebase';
+import { ConflictEditor } from './ConflictEditor';
+import { CreatePrDialog, type NewPr } from './CreatePrDialog';
+import { cleanTemplate, saveSettings, useSettings, shortcut } from '../lib/settings';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import {
   branchCreated,
@@ -20,6 +41,7 @@ import {
   headMove,
   refCreated,
   refDeleted,
+  refsDeleted,
   sameHead,
   type HeadState,
   type UndoEntry,
@@ -31,14 +53,29 @@ interface Props {
   command: { name: string; n: number } | null;
   onRepoMenu: (e: React.MouseEvent) => void;
   appCommands: PaletteCommand[];
+  onOpenRepo: (path: string) => void;
 }
 
 const EMPTY_STATUS: Status = { staged: [], unstaged: [], conflicted: [] };
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const isOpResult = (r: unknown): r is OpResult => !!r && typeof r === 'object' && 'conflict' in r;
 const HISTORY_LIMIT = 50;
+
+interface PushReport {
+  ref: string;
+  count: number;
+  authors: string[];
+  isNew: boolean;
+}
+const LOG_PAGE = 5000;
 const NO_FILTER: GraphFilter = { solo: [], hidden: [] };
 const shortRef = (full: string) => full.replace(/^refs\/(heads|remotes|tags)\//, '');
+// A branch's name without its remote prefix.
+const branchName = (r: Ref) => (r.type === 'remote' ? r.name.split('/').slice(1).join('/') : r.name);
+const splitMessage = (m: string) => {
+  const [first, ...rest] = m.split('\n');
+  return { summary: first, description: rest.join('\n').trim() };
+};
 
 function loadFilter(path: string): GraphFilter {
   try {
@@ -48,7 +85,7 @@ function loadFilter(path: string): GraphFilter {
   return NO_FILTER;
 }
 
-export function RepoView({ path, active, command, onRepoMenu, appCommands }: Props) {
+export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpenRepo }: Props) {
   const ui = useUI();
   const [info, setInfo] = useState<RepoInfo | null>(null);
   const [commits, setCommits] = useState<Commit[]>([]);
@@ -67,7 +104,17 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
   const [amend, setAmend] = useState(false);
   const [sideW, setSideW] = useState(() => Number(localStorage.getItem('sideW')) || 250);
   const [rightW, setRightW] = useState(() => Number(localStorage.getItem('rightW')) || 380);
-  const [pullMode, setPullMode] = useState<PullMode>(() => (localStorage.getItem('pullMode') as PullMode) || 'ff');
+  const settings = useSettings();
+  const pullMode = settings.pullMode;
+  const [template, setTemplate] = useState('');
+  const [coAuthors, setCoAuthors] = useState<Author[]>([]);
+  const [gh, setGh] = useState<GhStatus | null>(null);
+  const [prs, setPrs] = useState<PullRequest[]>([]);
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  const [submodules, setSubmodules] = useState<Submodule[]>([]);
+  const [lfs, setLfs] = useState<LfsInfo | null>(null);
+  const [prDraft, setPrDraft] = useState<{ head: string; needsPush: boolean; base: string; title: string } | null>(null);
   const [history, setHistory] = useState<{ undo: UndoEntry[]; redo: UndoEntry[] }>({ undo: [], redo: [] });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [fileView, setFileView] = useState<{ path: string; mode: FileViewMode; rev?: string } | null>(null);
@@ -76,6 +123,10 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
   const [rebaseEditor, setRebaseEditor] = useState<{ base: string; commits: RebaseCommit[] } | null>(null);
   const filterRef = useRef(graphFilter);
   filterRef.current = graphFilter;
+  // How many commits the graph loads; "Load more" raises it.
+  const [logLimit, setLogLimit] = useState(LOG_PAGE);
+  const limitRef = useRef(logLimit);
+  limitRef.current = logLimit;
   const seq = useRef(0);
   const didInitialSelect = useRef(false);
 
@@ -85,12 +136,16 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
     try {
       const [i, c, r, s, st] = await Promise.all([
         git<RepoInfo>('info', path),
-        git<Commit[]>('log', path, 5000, filterRef.current),
+        git<Commit[]>('log', path, limitRef.current, filterRef.current),
         git<Ref[]>('refs', path),
         git<Stash[]>('stashes', path),
         git<Status>('status', path),
       ]);
+      // Worktrees and submodules are extras; a failure there shouldn't break loading the repo.
+      const [wt, sm] = await Promise.all([git<Worktree[]>('worktrees', path).catch(() => []), git<Submodule[]>('submodules', path).catch(() => [])]);
       if (n !== seq.current) return;
+      setWorktrees(wt);
+      setSubmodules(sm);
       setInfo(i);
       setCommits(c);
       setRefs(r);
@@ -129,17 +184,87 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
     return api.onFocus(() => refreshAll());
   }, [active, refreshAll]);
 
-  // Background fetch every 5 minutes.
-  const hasRemotes = !!info?.remotes.length;
+  // ---------- GitHub ----------
+  const remotesKey = info?.remotes.join(',') ?? '';
+  const loadPrs = useCallback(async () => {
+    try {
+      setPrs(await git<PullRequest[]>('ghPrs', path));
+    } catch (e) {
+      setGh({ ok: false, reason: cleanError(e) });
+    }
+  }, [path]);
+
   useEffect(() => {
-    if (!hasRemotes) return;
+    if (!info) return;
+    let alive = true;
+    git<GhStatus>('ghStatus', path).then((st) => {
+      if (!alive) return;
+      setGh(st);
+      if (!st.ok) return setPrs([]);
+      loadPrs();
+      git<string | null>('ghDefaultBranch', path).then((b) => alive && setDefaultBranch(b));
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, remotesKey, !!info, loadPrs]);
+
+  // Tell the user when someone else pushed, in-app and (when the window isn't focused) via the OS.
+  const notifyRef = useRef(settings.notifyPushes);
+  notifyRef.current = settings.notifyPushes;
+  const announcePushes = useCallback(
+    (report: PushReport[] | undefined) => {
+      if (!report?.length || !notifyRef.current) return;
+      const who = (a: string[]) => (a.length > 2 ? `${a[0]} and ${a.length - 1} others` : a.join(' and '));
+      const msgs = report.map((r) =>
+        r.isNew
+          ? `${who(r.authors)} pushed a new branch ${r.ref} (${r.count} commit${r.count === 1 ? '' : 's'})`
+          : `${who(r.authors)} pushed ${r.count} commit${r.count === 1 ? '' : 's'} to ${r.ref}`
+      );
+      const body = msgs.length > 3 ? [...msgs.slice(0, 3), `…and ${msgs.length - 3} more branches`].join('\n') : msgs.join('\n');
+      ui.toast(body, 'info');
+      if (!document.hasFocus() && 'Notification' in window) new Notification(basename(path), { body });
+    },
+    [ui, path]
+  );
+
+  // Background fetch on the interval from Settings.
+  const hasRemotes = !!info?.remotes.length;
+  const ghOk = !!gh?.ok;
+  useEffect(() => {
+    if (!hasRemotes || !settings.autoFetchMinutes) return;
     const t = setInterval(() => {
-      git('fetch', path)
-        .then(refreshAll)
+      git<PushReport[]>('fetch', path)
+        .then((report) => {
+          announcePushes(report);
+          return refreshAll();
+        })
         .catch(() => {});
-    }, 5 * 60 * 1000);
+      if (ghOk) loadPrs();
+    }, settings.autoFetchMinutes * 60 * 1000);
     return () => clearInterval(t);
-  }, [hasRemotes, path, refreshAll]);
+  }, [hasRemotes, path, refreshAll, settings.autoFetchMinutes, ghOk, loadPrs, announcePushes]);
+
+  useEffect(() => {
+    git<LfsInfo>('lfsInfo', path)
+      .then(setLfs)
+      .catch(() => setLfs(null));
+  }, [path]);
+
+  // ---------- commit message template ----------
+  // git's commit.template wins over the app-wide one from Settings.
+  useEffect(() => {
+    git<string | null>('commitTemplate', path)
+      .catch(() => null)
+      .then((t) => setTemplate(cleanTemplate(t) || cleanTemplate(settings.commitTemplate)));
+  }, [path, settings.commitTemplate]);
+
+  const firstLimit = useRef(true);
+  useEffect(() => {
+    if (firstLimit.current) firstLimit.current = false;
+    else refreshAll();
+  }, [logLimit, refreshAll]);
 
   // Reload the graph when branches are hidden / solo'd.
   const firstFilter = useRef(true);
@@ -225,11 +350,30 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
     setDiff(other ? { kind: 'wip', file: other, staged: !diff.staged } : null);
   }, [status, diff]);
 
+  // The commit box counts as untouched when it's empty or still holds the unedited template.
+  const appliedTemplate = useRef('');
+  const isPristine = () => {
+    if (!summary.trim() && !description.trim()) return true;
+    if (!appliedTemplate.current) return false;
+    const t = splitMessage(appliedTemplate.current);
+    return summary === t.summary && description === t.description;
+  };
+  const resetMessage = () => {
+    const t = splitMessage(template);
+    setSummary(template ? t.summary : '');
+    setDescription(template ? t.description : '');
+    appliedTemplate.current = template;
+  };
+  useEffect(() => {
+    if (isPristine() && !info?.state) resetMessage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template]);
+
   // Prefill the commit message while a merge / cherry-pick / revert is in progress.
   const prevState = useRef<string | null>(null);
   useEffect(() => {
     const st = info?.state ?? null;
-    if (st && st !== prevState.current && info?.mergeMsg && !summary) {
+    if (st && st !== prevState.current && info?.mergeMsg && isPristine()) {
       const [first, ...rest] = info.mergeMsg.split('\n');
       setSummary(first);
       setDescription(rest.join('\n').trim());
@@ -330,7 +474,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
         ? { undo: h.undo.slice(0, -1), redo: [...h.redo, entry] }
         : { undo: [...h.undo, entry], redo: h.redo.slice(0, -1) }
     );
-    if (dir === 'undo' && entry.message && !summary.trim()) {
+    if (dir === 'undo' && entry.message && isPristine()) {
       const [first, ...rest] = entry.message.split('\n');
       setSummary(first);
       setDescription(rest.join('\n').trim());
@@ -444,30 +588,250 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
 
   const pull = (mode: PullMode = pullMode) => tracked('Pulling…', () => git('pull', path, mode), 'Pulled', (b, a) => headMove('Pull', b, a, 'keep'));
 
-  const mergeRef = (name: string) => {
-    const cur = info?.branch ?? 'HEAD';
+  const mergeRef = (name: string, cur = info?.branch ?? 'HEAD') => {
     tracked('Merging…', () => git('merge', path, name), `Merged ${name} into ${cur}`, (b, a) => headMove(`Merge ${name} into ${cur}`, b, a, 'keep'));
   };
-  const rebaseOnto = (name: string) => {
-    const cur = info?.branch ?? 'HEAD';
+  const rebaseOnto = (name: string, cur = info?.branch ?? 'HEAD') => {
     tracked('Rebasing…', () => git('rebase', path, name), `Rebased ${cur} onto ${name}`, (b, a) => headMove(`Rebase ${cur} onto ${name}`, b, a, 'keep'));
   };
-  const fetchAll = () => run('Fetching…', () => git('fetch', path), 'Fetched all remotes');
+  const fetchAll = async () => {
+    const report = await run('Fetching…', () => git<PushReport[]>('fetch', path), 'Fetched all remotes');
+    announcePushes(report);
+    if (gh?.ok) loadPrs();
+  };
+
+  // Checks out `branch`, then runs `then` only if the checkout actually happened.
+  const checkoutThen = async (branch: string, then: () => void) => {
+    await tracked(`Checking out ${branch}…`, () => git('checkout', path, branch), undefined, (b, a) => checkoutMove(`Checkout ${branch}`, b, a));
+    if ((await headState())?.branch === branch) then();
+  };
+
+  // ---------- stale branches ----------
+  const pruneGone = async () => {
+    const gone = locals.filter((r) => r.track === 'gone' && !r.isHead);
+    if (!gone.length) return ui.toast('No local branches have a deleted remote branch.', 'info');
+    const list = (rs: Ref[]) => (
+      <ul className="confirm-list">
+        {rs.map((r) => (
+          <li key={r.full}>{r.name}</li>
+        ))}
+      </ul>
+    );
+    if (
+      !(await ui.confirm({
+        title: 'Delete stale branches',
+        message: <>These local branches track remote branches that were deleted:{list(gone)}</>,
+        confirmText: `Delete ${gone.length}`,
+        danger: true,
+      }))
+    )
+      return;
+    const state = await headState();
+    const deleted: Ref[] = [];
+    const unmerged: Ref[] = [];
+    const del = async (rs: Ref[], force: boolean) => {
+      for (const r of rs) {
+        try {
+          await git('deleteBranch', path, r.name, force);
+          deleted.push(r);
+        } catch (e) {
+          if (!force && /not fully merged/.test(cleanError(e))) unmerged.push(r);
+          else ui.toast(cleanError(e), 'error');
+        }
+      }
+    };
+    setBusy('Deleting branches…');
+    await del(gone, false);
+    setBusy(null);
+    if (
+      unmerged.length &&
+      (await ui.confirm({
+        title: 'Some branches have unmerged commits',
+        message: <>These branches have commits that aren't merged into the current branch. Delete them anyway?{list(unmerged)}</>,
+        confirmText: 'Force Delete',
+        danger: true,
+      }))
+    )
+      await del(unmerged, true);
+    if (deleted.length) {
+      if (state) record(refsDeleted(`Delete ${deleted.length} stale branch${deleted.length === 1 ? '' : 'es'}`, deleted, state));
+      ui.toast(`Deleted ${deleted.map((r) => r.name).join(', ')}`, 'success');
+    }
+    refreshAll();
+  };
+
+  // ---------- pull requests ----------
+  const prFor = (r: Ref) => prs.find((p) => !p.fork && p.head === branchName(r));
+
+  const openCreatePr = (r: Ref, base?: string) => {
+    const head = branchName(r);
+    const local = r.type === 'local' ? r : locals.find((l) => l.name === head);
+    const t = parseTrack(local?.track);
+    const needsPush = !!local && (!local.upstream || t.gone || t.ahead > 0);
+    const tip = commits.find((c) => c.sha === (local ?? r).sha);
+    setPrDraft({
+      head,
+      needsPush,
+      base: base ?? defaultBranch ?? (refs.some((x) => x.name === 'main') ? 'main' : 'master'),
+      title: tip?.subject ?? head,
+    });
+  };
+
+  const createPr = async (pr: NewPr) => {
+    if (!prDraft) return;
+    const { head, needsPush } = prDraft;
+    setPrDraft(null);
+    const url = await run(
+      'Creating pull request…',
+      async () => {
+        if (needsPush) await git('push', path, head, false);
+        return git<string>('ghCreatePr', path, head, pr.base, pr.title, pr.body, pr.draft);
+      },
+      'Created pull request'
+    );
+    if (url) {
+      window.open(url);
+      loadPrs();
+    }
+  };
+
+  const checkoutPr = (pr: PullRequest) =>
+    tracked(`Checking out #${pr.number}…`, () => git('ghCheckoutPr', path, pr.number), `Checked out #${pr.number}`, (b, a) =>
+      checkoutMove(`Checkout pull request #${pr.number}`, b, a)
+    );
+
+  const selectPr = (pr: PullRequest) => {
+    const r = refs.find((x) => x.type === 'local' && x.name === pr.head) ?? refs.find((x) => x.type === 'remote' && branchName(x) === pr.head);
+    if (r) selectSha(r.sha);
+  };
+
+  const prMenu = (e: React.MouseEvent, pr: PullRequest) =>
+    ui.menu(e, [
+      { label: `Checkout #${pr.number}`, onClick: () => checkoutPr(pr) },
+      { label: 'Show branch in graph', onClick: () => selectPr(pr) },
+      'sep',
+      { label: 'Open on GitHub', onClick: () => window.open(pr.url) },
+      { label: 'Copy link', onClick: () => copy(pr.url) },
+    ]);
+
+  // ---------- drag a branch onto another ----------
+  const refDrop = (e: React.DragEvent, sourceFull: string, target: Ref) => {
+    const source = refs.find((r) => r.full === sourceFull);
+    if (!source || source.type === 'tag' || target.type === 'tag' || source.full === target.full) return;
+    const s = source.name;
+    const t = target.name;
+    const items: MenuItem[] = [];
+    if (target.type === 'local') {
+      if (target.isHead) items.push({ label: `Merge ${s} into ${t}`, onClick: () => mergeRef(s, t) });
+      else items.push({ label: `Merge ${s} into ${t}`, hint: `checks out ${t}`, onClick: () => checkoutThen(t, () => mergeRef(s, t)) });
+    }
+    if (source.type === 'local') {
+      if (source.isHead) items.push({ label: `Rebase ${s} onto ${t}`, onClick: () => rebaseOnto(t, s) });
+      else items.push({ label: `Rebase ${s} onto ${t}`, hint: `checks out ${s}`, onClick: () => checkoutThen(s, () => rebaseOnto(t, s)) });
+    }
+    if (gh?.ok && branchName(source) !== branchName(target)) {
+      items.push('sep', { label: `Create pull request: ${branchName(source)} → ${branchName(target)}`, onClick: () => openCreatePr(source, branchName(target)) });
+    }
+    if (items.length) ui.menu(e, items);
+  };
+
+  // ---------- worktrees / submodules / LFS ----------
+  // Worktree paths are absolute; submodule paths are relative to this repo.
+  const openRepoPath = (p: string) => onOpenRepo(/^([A-Za-z]:)?[\\/]/.test(p) ? p : joinPath(path, p));
+
+  const addWorktree = async (r: Ref) => {
+    const parent = path.replace(/[\\/][^\\/]+[\\/]?$/, '');
+    const suggestion = joinPath(parent, `${basename(path)}-${r.name.replace(/[\\/]/g, '-')}`);
+    const dir = await ui.prompt({ title: `Check out ${r.name} in a new worktree`, label: 'Folder for the new worktree', initial: suggestion, confirmText: 'Create Worktree' });
+    if (!dir) return;
+    const made = await run('Creating worktree…', () => git<string>('addWorktree', path, dir, r.name), `Checked out ${r.name} in ${basename(dir)}`);
+    if (made) onOpenRepo(made);
+  };
+
+  const worktreeMenu = (e: React.MouseEvent, w: Worktree) =>
+    ui.menu(e, [
+      { label: 'Open in new tab', disabled: w.current, onClick: () => openRepoPath(w.path) },
+      { label: 'Show in folder', onClick: () => api.openPath(w.path) },
+      { label: 'Copy path', onClick: () => copy(w.path) },
+      'sep',
+      ...(w.prunable ? [{ label: 'Prune missing worktrees', onClick: () => run('Pruning…', () => git('pruneWorktrees', path), 'Pruned worktrees') }] : []),
+      {
+        label: 'Remove worktree…',
+        danger: true,
+        disabled: w.current,
+        onClick: async () => {
+          if (!(await ui.confirm({ title: 'Remove worktree', message: <>Remove the worktree at <b>{w.path}</b>? The folder is deleted; the branch stays.</>, confirmText: 'Remove', danger: true })))
+            return;
+          try {
+            await git('removeWorktree', path, w.path, false);
+            ui.toast('Removed worktree', 'success');
+          } catch (err) {
+            const msg = cleanError(err);
+            if (/modified or untracked|contains modified/.test(msg)) {
+              if (await ui.confirm({ title: 'Worktree has changes', message: 'It has uncommitted changes. Remove it anyway? They will be lost.', confirmText: 'Force Remove', danger: true }))
+                await run('Removing worktree…', () => git('removeWorktree', path, w.path, true), 'Removed worktree');
+            } else ui.toast(msg, 'error');
+          }
+          refreshAll();
+        },
+      },
+    ]);
+
+  const submoduleMenu = (e: React.MouseEvent, s: Submodule) =>
+    ui.menu(e, [
+      s.state === 'uninitialized'
+        ? { label: 'Initialize and clone', onClick: () => run('Cloning submodule…', () => git('updateSubmodules', path, s.path), `Initialized ${s.path}`) }
+        : { label: 'Update to recorded commit', onClick: () => run('Updating submodule…', () => git('updateSubmodules', path, s.path), `Updated ${s.path}`) },
+      { label: 'Open in new tab', disabled: s.state === 'uninitialized', onClick: () => openRepoPath(s.path) },
+      'sep',
+      { label: 'Update all submodules', onClick: () => run('Updating submodules…', () => git('updateSubmodules', path), 'Updated submodules') },
+      { label: 'Copy path', onClick: () => copy(s.path) },
+    ]);
+
+  // ---------- co-authors ----------
+  const coAuthorMenu = async (e: React.MouseEvent) => {
+    const pos = { clientX: e.clientX, clientY: e.clientY };
+    const [all, me] = await Promise.all([
+      git<Author[]>('authors', path).catch(() => [] as Author[]),
+      git<string | null>('getConfig', path, 'user.email').catch(() => null),
+    ]);
+    const has = (a: Author) => coAuthors.some((c) => c.email === a.email);
+    const toggle = (a: Author) => setCoAuthors((cs) => (cs.some((c) => c.email === a.email) ? cs.filter((c) => c.email !== a.email) : [...cs, a]));
+    const seen = new Set<string>();
+    const candidates = all.filter((a) => a.email !== me && !seen.has(a.email) && seen.add(a.email)).slice(0, 20);
+    ui.menu(pos, [
+      ...candidates.map((a) => ({ label: `${has(a) ? '✓ ' : '   '}${a.name}`, hint: a.email, onClick: () => toggle(a) })),
+      ...(candidates.length ? ['sep' as const] : []),
+      {
+        label: 'Add someone else…',
+        onClick: async () => {
+          const v = await ui.prompt({ title: 'Add co-author', label: 'Name and email', placeholder: 'Ada Lovelace <ada@example.com>', confirmText: 'Add' });
+          const m = v?.match(/^(.+?)\s*<([^>]+)>$/);
+          if (m) toggle({ name: m[1].trim(), email: m[2].trim() });
+          else if (v) ui.toast('Use the form: Name <email>', 'error');
+        },
+      },
+    ]);
+  };
 
   const stash = async () => {
     if (!totalChanges) return ui.toast('No local changes to stash', 'info');
-    await run('Stashing…', () => git('stash', path, summary.trim() || undefined), 'Stashed changes');
-    setSummary('');
-    setDescription('');
+    const message = isPristine() ? undefined : summary.trim() || undefined;
+    await run('Stashing…', () => git('stash', path, message), 'Stashed changes');
+    resetMessage();
   };
   const pop = () => run('Popping stash…', () => git('stashPop', path), 'Popped stash');
 
   const commit = async () => {
+    // Like git, refuse a message that is just the untouched template.
+    if (template && isPristine()) return ui.toast('Edit the commit message template before committing.', 'info');
     const msg = summary.trim();
-    const full = [msg, description.trim()].filter(Boolean).join('\n\n');
+    const trailers = coAuthors.map((a) => `Co-authored-by: ${a.name} <${a.email}>`).join('\n');
+    const body = [description.trim(), trailers].filter(Boolean).join('\n\n');
+    const full = [msg, body].filter(Boolean).join('\n\n');
     const ok = await tracked(
       amend ? 'Amending…' : 'Committing…',
-      () => git('commit', path, msg, description, amend).then(() => true),
+      () => git('commit', path, msg, body, amend).then(() => true),
       undefined,
       (b, a) => {
         const e = headMove(`${amend ? 'Amend' : 'Commit'} "${msg}"`, b, a, 'soft');
@@ -475,8 +839,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       }
     );
     if (ok) {
-      setSummary('');
-      setDescription('');
+      resetMessage();
+      setCoAuthors([]);
       setAmend(false);
       setDiff(null);
     }
@@ -484,7 +848,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
 
   const toggleAmend = async (on: boolean) => {
     setAmend(on);
-    if (on && !summary.trim()) {
+    if (on && isPristine()) {
       try {
         const msg = await git<string>('lastCommitMessage', path);
         const [first, ...rest] = msg.split('\n');
@@ -513,6 +877,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
     if (await ui.confirm({ title: 'Discard changes', message: <>Discard changes to <b>{label}</b>? This cannot be undone.</>, confirmText: 'Discard', danger: true }))
       run('Discarding…', () => git('discard', path, files));
   };
+
+  const openInEditor = (file?: string, line?: number) =>
+    api.openInEditor(path, file, line, settings.editor).catch((e) => ui.toast(cleanError(e), 'error'));
 
   const copy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -666,6 +1033,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       }
       items.push('sep');
       items.push({ label: 'Create branch here', onClick: () => createBranch(r.sha) });
+      const elsewhere = worktrees.find((w) => !w.current && w.branch === r.name);
+      if (elsewhere) items.push({ label: `Open worktree for ${r.name}`, onClick: () => openRepoPath(elsewhere.path) });
+      else if (!isCur) items.push({ label: 'Check out in new worktree…', onClick: () => addWorktree(r) });
       items.push({ label: `Rename ${r.name}`, onClick: () => renameBranch(r) });
       if (!isCur) items.push({ label: `Delete ${r.name}`, onClick: () => deleteBranch(r), danger: true });
       items.push('sep');
@@ -711,6 +1081,17 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
         },
       });
       items.push({ label: 'Copy tag name', onClick: () => copy(r.name) });
+    }
+    if (gh?.ok && r.type !== 'tag') {
+      const pr = prFor(r);
+      items.push('sep');
+      if (pr) {
+        items.push({ label: `Open pull request #${pr.number}`, onClick: () => window.open(pr.url) });
+      } else if (branchName(r) !== defaultBranch) items.push({ label: 'Create pull request…', onClick: () => openCreatePr(r) });
+    }
+    if (r.type === 'local' && r.track === 'gone') {
+      items.push('sep');
+      items.push({ label: 'Delete branches whose remote is gone…', onClick: pruneGone });
     }
     items.push('sep');
     if (!r.isHead) items.push({ label: graphFilter.hidden.includes(r.full) ? 'Show in graph' : 'Hide in graph', onClick: () => toggleHidden(r) });
@@ -782,6 +1163,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       items.push({ label: 'Blame', onClick: () => openFileView(f.path, 'blame') });
       items.push('sep');
     }
+    if (f.status !== 'D') items.push({ label: 'Open in editor', onClick: () => openInEditor(f.path) });
     items.push({ label: 'Open file', onClick: () => api.openPath(full) });
     items.push({ label: 'Show in folder', onClick: () => api.showItem(full) });
     items.push({ label: 'Copy file path', onClick: () => copy(f.path) });
@@ -794,6 +1176,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       { label: 'File history', onClick: () => openFileView(f.path, 'history') },
       { label: 'Blame at this commit', disabled: f.status === 'D', onClick: () => openFileView(f.path, 'blame', sha) },
       'sep',
+      { label: 'Open in editor', onClick: () => openInEditor(f.path) },
       { label: 'Open file', onClick: () => api.openPath(full) },
       { label: 'Show in folder', onClick: () => api.showItem(full) },
       { label: 'Copy file path', onClick: () => copy(f.path) },
@@ -814,8 +1197,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       ...(Object.keys(PULL_LABELS) as PullMode[]).map((m) => ({
         label: `${m === pullMode ? '✓ ' : '   '}${PULL_LABELS[m]}`,
         onClick: () => {
-          setPullMode(m);
-          localStorage.setItem('pullMode', m);
+          saveSettings({ pullMode: m });
           pull(m);
         },
       })),
@@ -840,13 +1222,22 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
     const lastRedo = history.redo[history.redo.length - 1];
     const cur = info?.branch;
 
-    if (lastUndo) add('Edit', `Undo ${lastUndo.label}`, () => applyHistory('undo'), '⌘Z');
-    if (lastRedo) add('Edit', `Redo ${lastRedo.label}`, () => applyHistory('redo'), '⇧⌘Z');
+    if (lastUndo) add('Edit', `Undo ${lastUndo.label}`, () => applyHistory('undo'), shortcut('Z'));
+    if (lastRedo) add('Edit', `Redo ${lastRedo.label}`, () => applyHistory('redo'), shortcut('Z', true));
     add('Remote', 'Fetch all', fetchAll);
     for (const m of Object.keys(PULL_LABELS) as PullMode[]) add('Remote', PULL_LABELS[m], () => pull(m));
     add('Remote', 'Push', () => push());
     add('Remote', 'Add remote…', addRemote);
     add('Branch', 'Create branch…', () => createBranch());
+    if (locals.some((r) => r.track === 'gone' && !r.isHead)) add('Branch', 'Delete branches whose remote is gone…', pruneGone);
+    if (gh?.ok) {
+      add('GitHub', 'Refresh pull requests', loadPrs);
+      if (currentRef && !prFor(currentRef) && currentRef.name !== defaultBranch) add('GitHub', `Create pull request for ${currentRef.name}…`, () => openCreatePr(currentRef));
+      for (const pr of prs) {
+        add('GitHub', `Checkout #${pr.number} ${pr.title}`, () => checkoutPr(pr));
+        add('GitHub', `Open #${pr.number} on GitHub`, () => window.open(pr.url));
+      }
+    }
     add('Changes', 'Stash changes', stash);
     if (stashes.length) add('Changes', 'Pop stash', pop);
     if (totalChanges) {
@@ -860,11 +1251,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
       setDiff(null);
       setFileView(null);
       setFindOpen(true);
-    }, '⌘F');
-    add('View', 'Refresh', refreshAll, '⌘R');
+    }, shortcut('F'));
+    add('View', 'Refresh', refreshAll, shortcut('R'));
     if (filterActive) add('View', 'Show all branches in graph', () => setGraphFilter(NO_FILTER));
     if (compare) add('View', 'Stop comparing', () => setCompareSha(null));
     add('Repo', 'Open in terminal', () => api.openTerminal(path));
+    add('Repo', 'Open in editor', () => openInEditor());
     add('Repo', 'Reveal repository folder', () => api.openPath(path));
 
     for (const r of refs) {
@@ -922,6 +1314,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
         onPop={pop}
         onFetch={fetchAll}
         onTerminal={() => api.openTerminal(path)}
+        onEditor={() => openInEditor()}
         onReveal={() => api.openPath(path)}
       />
       <div className="repo-main">
@@ -931,6 +1324,21 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
             stashes={stashes}
             remotes={info?.remotes ?? []}
             filter={graphFilter}
+            prs={prs}
+            gh={gh}
+            onPrClick={selectPr}
+            onPrDoubleClick={checkoutPr}
+            onPrMenu={prMenu}
+            onRefreshPrs={loadPrs}
+            onPruneGone={pruneGone}
+            onRefDrop={refDrop}
+            worktrees={worktrees}
+            submodules={submodules}
+            lfs={lfs}
+            onOpenRepo={openRepoPath}
+            onWorktreeMenu={worktreeMenu}
+            onSubmoduleMenu={submoduleMenu}
+            onLfsPull={() => run('Pulling LFS files…', () => git('lfsPull', path), 'Downloaded LFS files')}
             onSelectSha={selectSha}
             onRefMenu={refMenu}
             onRefDoubleClick={checkoutRef}
@@ -952,6 +1360,25 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
               onMode={(mode) => setFileView({ ...fileView, mode })}
               onClose={closeFileView}
               onSelectSha={selectSha}
+              onOpenInEditor={(line) => openInEditor(fileView.path, line)}
+            />
+          ) : diff && diff.kind === 'wip' && diff.file.status === 'U' ? (
+            <ConflictEditor
+              key={diff.file.path}
+              repo={path}
+              path={diff.file.path}
+              onClose={() => setDiff(null)}
+              onResolve={(content) =>
+                run(
+                  'Resolving…',
+                  async () => {
+                    await git('writeFile', path, diff.file.path, content);
+                    await git('stage', path, [diff.file.path]);
+                  },
+                  `Resolved ${diff.file.path}`
+                )
+              }
+              onTake={(side) => run('Resolving…', () => git('resolve', path, diff.file.path, side), `Took ${side} for ${diff.file.path}`)}
             />
           ) : diff ? (
             <DiffView
@@ -982,6 +1409,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
                 setCompareSha(sha);
               }}
               onSearch={(mode, q) => git<string[]>('searchCommits', path, mode, q)}
+              onRefDrop={refDrop}
+              canLoadMore={commits.length >= logLimit}
+              onLoadMore={() => setLogLimit((n) => n + LOG_PAGE)}
               filterNote={
                 filterActive && (
                   <>
@@ -1033,6 +1463,17 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
               onAbort={() => info.state && run('Aborting…', () => git('abort', path, info.state), 'Aborted')}
               onContinue={() => info.state && run('Continuing…', () => git('continueOp', path, info.state))}
               onSkip={() => run('Skipping…', () => git('skipRebase', path))}
+              behind={track.behind > 0 && currentRef?.upstream ? { count: track.behind, upstream: currentRef.upstream } : null}
+              onPull={() => pull()}
+              coAuthors={coAuthors}
+              onCoAuthorMenu={coAuthorMenu}
+              onRemoveCoAuthor={(a) => setCoAuthors((cs) => cs.filter((c) => c.email !== a.email))}
+              onIgnoredMenu={(e, f) =>
+                ui.menu(e, [
+                  { label: 'Show in folder', onClick: () => api.showItem(joinPath(path, f.replace(/\/$/, ''))) },
+                  { label: 'Copy path', onClick: () => copy(f) },
+                ])
+              }
             />
           ) : compare ? (
             <ComparePanel
@@ -1076,6 +1517,18 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands }: Pro
           )}
         </div>
       </div>
+      {prDraft && (
+        <CreatePrDialog
+          head={prDraft.head}
+          needsPush={prDraft.needsPush}
+          defaultBase={prDraft.base}
+          defaultTitle={prDraft.title}
+          defaultBody=""
+          bases={[...new Set([prDraft.base, ...refs.filter((r) => r.type !== 'tag').map(branchName)])].filter((b) => b !== prDraft.head)}
+          onCancel={() => setPrDraft(null)}
+          onCreate={createPr}
+        />
+      )}
       {rebaseEditor && (
         <InteractiveRebase
           branch={info?.branch ?? 'HEAD'}

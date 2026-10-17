@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Laptop, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair } from 'lucide-react';
-import type { GraphFilter, Ref, Stash } from '../types';
+import { ChevronDown, ChevronRight, Laptop, Cloud, Archive, Tag, Folder, Check, Plus, Search, ArrowUp, ArrowDown, EyeOff, Crosshair, CloudOff, GitPullRequest, GitPullRequestDraft, Eraser, RefreshCw, FolderTree, Package, HardDrive, AlertTriangle } from 'lucide-react';
+import type { GhStatus, GraphFilter, LfsInfo, PullRequest, Ref, Stash, Submodule, Worktree } from '../types';
 import { parseTrack } from '../lib/format';
 
 interface Props {
@@ -8,6 +8,21 @@ interface Props {
   stashes: Stash[];
   remotes: string[];
   filter: GraphFilter;
+  prs: PullRequest[];
+  gh: GhStatus | null;
+  onPrClick: (pr: PullRequest) => void;
+  onPrDoubleClick: (pr: PullRequest) => void;
+  onPrMenu: (e: React.MouseEvent, pr: PullRequest) => void;
+  onRefreshPrs: () => void;
+  onPruneGone: () => void;
+  onRefDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void;
+  worktrees: Worktree[];
+  submodules: Submodule[];
+  lfs: LfsInfo | null;
+  onOpenRepo: (path: string) => void;
+  onWorktreeMenu: (e: React.MouseEvent, w: Worktree) => void;
+  onSubmoduleMenu: (e: React.MouseEvent, s: Submodule) => void;
+  onLfsPull: () => void;
   onSelectSha: (sha: string) => void;
   onRefMenu: (e: React.MouseEvent, r: Ref) => void;
   onRefDoubleClick: (r: Ref) => void;
@@ -69,6 +84,8 @@ export function Sidebar(props: Props) {
   const remoteRefs = useMemo(() => refs.filter((r) => r.type === 'remote'), [refs]);
   const tags = useMemo(() => refs.filter((r) => r.type === 'tag'), [refs]);
   const filteredStashes = stashes.filter((s) => !f || s.message.toLowerCase().includes(f));
+  const goneCount = locals.filter((r) => r.track === 'gone' && !r.isHead).length;
+  const prs = props.prs.filter((p) => !f || p.title.toLowerCase().includes(f) || p.head.toLowerCase().includes(f) || String(p.number).includes(f));
 
   const renderTree = (node: TreeNode, depth: number, keyPrefix: string, icon: 'local' | 'remote'): React.ReactNode =>
     sortedChildren(node).map((child) => {
@@ -117,10 +134,52 @@ export function Sidebar(props: Props) {
           'LOCAL',
           locals.length,
           renderTree(buildTree(locals.filter(match)), 0, 'local', 'local'),
-          <button className="icon-btn" title="Create branch" onClick={props.onNewBranch}>
-            <Plus size={13} />
-          </button>
+          <>
+            {goneCount > 0 && (
+              <button className="icon-btn" title={`Delete ${goneCount} branch${goneCount === 1 ? '' : 'es'} whose remote branch is gone`} onClick={props.onPruneGone}>
+                <Eraser size={13} />
+              </button>
+            )}
+            <button className="icon-btn" title="Create branch" onClick={props.onNewBranch}>
+              <Plus size={13} />
+            </button>
+          </>
         )}
+        {props.gh &&
+          props.gh.reason !== 'No GitHub remote' &&
+          section(
+            'prs',
+            'PULL REQUESTS',
+            props.prs.length,
+            props.gh.ok ? (
+              prs.length ? (
+                prs.map((pr) => (
+                  <div
+                    key={pr.number}
+                    className="side-item pr-item"
+                    style={{ paddingLeft: 24 }}
+                    onClick={() => props.onPrClick(pr)}
+                    onDoubleClick={() => props.onPrDoubleClick(pr)}
+                    onContextMenu={(e) => props.onPrMenu(e, pr)}
+                    title={`#${pr.number} ${pr.title}\n${pr.head} → ${pr.base} · by ${pr.author}${pr.draft ? ' · draft' : ''}`}
+                  >
+                    {pr.draft ? <GitPullRequestDraft size={13} className="side-icon" /> : <GitPullRequest size={13} className="side-icon pr-open" />}
+                    <span className="side-label">
+                      <span className="pr-num">#{pr.number}</span> {pr.title}
+                    </span>
+                    {pr.checks && <span className={`pr-checks ${pr.checks}`} title={`Checks: ${pr.checks}`} />}
+                  </div>
+                ))
+              ) : (
+                <div className="side-note">No open pull requests</div>
+              )
+            ) : (
+              <div className="side-note">{props.gh.reason}</div>
+            ),
+            <button className="icon-btn" title="Refresh pull requests" onClick={props.onRefreshPrs}>
+              <RefreshCw size={12} />
+            </button>
+          )}
         {section(
           'remote',
           'REMOTE',
@@ -167,6 +226,63 @@ export function Sidebar(props: Props) {
             </div>
           ))
         )}
+        {props.worktrees.length > 1 &&
+          section(
+            'worktrees',
+            'WORKTREES',
+            props.worktrees.length,
+            props.worktrees.map((w) => (
+              <div
+                key={w.path}
+                className={`side-item${w.current ? ' head' : ''}`}
+                style={{ paddingLeft: 24 }}
+                onDoubleClick={() => !w.current && props.onOpenRepo(w.path)}
+                onContextMenu={(e) => props.onWorktreeMenu(e, w)}
+                title={`${w.path}${w.prunable ? '\nFolder is missing; prune to clean up' : ''}`}
+              >
+                {w.current ? <Check size={13} className="side-icon head-icon" /> : <FolderTree size={13} className="side-icon" />}
+                <span className="side-label">{w.branch ?? (w.bare ? '(bare)' : `detached ${w.head?.slice(0, 7) ?? ''}`)}</span>
+                <span className="side-hint">{w.path.split(/[\\/]/).pop()}</span>
+                {w.prunable && <AlertTriangle size={12} className="ref-flag gone" />}
+              </div>
+            ))
+          )}
+        {props.submodules.length > 0 &&
+          section(
+            'submodules',
+            'SUBMODULES',
+            props.submodules.length,
+            props.submodules.map((s) => (
+              <div
+                key={s.path}
+                className={`side-item${s.state === 'uninitialized' ? ' ref-hidden' : ''}`}
+                style={{ paddingLeft: 24 }}
+                onDoubleClick={() => s.state !== 'uninitialized' && props.onOpenRepo(s.path)}
+                onContextMenu={(e) => props.onSubmoduleMenu(e, s)}
+                title={`${s.path} @ ${s.sha.slice(0, 7)}${s.describe ? ` (${s.describe})` : ''}\n${SUBMODULE_STATE[s.state]}`}
+              >
+                <Package size={13} className="side-icon" />
+                <span className="side-label">{s.path}</span>
+                {s.state !== 'ok' && <span className={`sub-state ${s.state}`}>{s.state === 'uninitialized' ? 'not cloned' : s.state}</span>}
+              </div>
+            ))
+          )}
+        {props.lfs?.used &&
+          section(
+            'lfs',
+            'GIT LFS',
+            props.lfs.files,
+            props.lfs.installed ? (
+              <div className="side-item" style={{ paddingLeft: 24 }} onClick={props.onLfsPull} title="Download the large files for this checkout">
+                <HardDrive size={13} className="side-icon" />
+                <span className="side-label">
+                  {props.lfs.files} file{props.lfs.files === 1 ? '' : 's'} in LFS · Pull
+                </span>
+              </div>
+            ) : (
+              <div className="side-note">This repo uses Git LFS, but git-lfs isn't installed. Large files will show as small pointer files.</div>
+            )
+          )}
         {section(
           'tags',
           'TAGS',
@@ -190,8 +306,45 @@ export function Sidebar(props: Props) {
   );
 }
 
-function RefRow({ r, depth, icon, filter, onSelectSha, onRefMenu, onRefDoubleClick }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
+const SUBMODULE_STATE: Record<Submodule['state'], string> = {
+  ok: 'Checked out at the recorded commit',
+  uninitialized: 'Not cloned yet. Right-click to initialize.',
+  modified: 'Checked out at a different commit than the one recorded',
+  conflict: 'Has a merge conflict',
+};
+
+// Drag a branch onto another branch to merge, rebase or open a pull request.
+export const REF_DRAG_TYPE = 'application/x-gitline-ref';
+
+export function refDragProps(r: Ref, onDrop: (e: React.DragEvent, sourceFull: string, target: Ref) => void) {
+  if (r.type === 'tag') return {};
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData(REF_DRAG_TYPE, r.full);
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes(REF_DRAG_TYPE)) return;
+      e.preventDefault();
+      e.currentTarget.classList.add('drop-target');
+    },
+    onDragLeave: (e: React.DragEvent) => e.currentTarget.classList.remove('drop-target'),
+    onDrop: (e: React.DragEvent) => {
+      e.currentTarget.classList.remove('drop-target');
+      const src = e.dataTransfer.getData(REF_DRAG_TYPE);
+      if (src && src !== r.full) {
+        e.preventDefault();
+        onDrop(e, src, r);
+      }
+    },
+  };
+}
+
+function RefRow({ r, depth, icon, filter, prs, onSelectSha, onRefMenu, onRefDoubleClick, onRefDrop }: { r: Ref; depth: number; icon: 'local' | 'remote' } & Props) {
   const t = parseTrack(r.track);
+  const branch = r.type === 'remote' ? r.name.split('/').slice(1).join('/') : r.name;
+  const pr = prs.find((p) => !p.fork && p.head === branch);
   const label = r.name.split('/').pop();
   const isSolo = filter.solo.includes(r.full);
   const isHidden = filter.hidden.includes(r.full) || (filter.solo.length > 0 && !isSolo && !r.isHead);
@@ -202,10 +355,17 @@ function RefRow({ r, depth, icon, filter, onSelectSha, onRefMenu, onRefDoubleCli
       onClick={() => onSelectSha(r.sha)}
       onDoubleClick={() => onRefDoubleClick(r)}
       onContextMenu={(e) => onRefMenu(e, r)}
-      title={r.upstream ? `${r.name} → ${r.upstream}` : r.name}
+      title={t.gone ? `${r.name}: its remote branch ${r.upstream} was deleted` : r.upstream ? `${r.name} → ${r.upstream}` : r.name}
+      {...refDragProps(r, onRefDrop)}
     >
       {r.isHead ? <Check size={13} className="side-icon head-icon" /> : icon === 'local' ? <Laptop size={13} className="side-icon" /> : <Cloud size={13} className="side-icon" />}
       <span className="side-label">{label}</span>
+      {pr && (
+        <span className="pr-badge" title={`#${pr.number} ${pr.title}`}>
+          #{pr.number}
+        </span>
+      )}
+      {t.gone && <CloudOff size={12} className="ref-flag gone" />}
       {isSolo && <Crosshair size={12} className="ref-flag solo" />}
       {filter.hidden.includes(r.full) && <EyeOff size={12} className="ref-flag" />}
       {(t.ahead > 0 || t.behind > 0) && (

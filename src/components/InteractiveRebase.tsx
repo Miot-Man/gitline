@@ -1,3 +1,4 @@
+import { shortcut } from '../lib/settings';
 import { useState } from 'react';
 import { ArrowUp, ArrowDown, CornerRightDown } from 'lucide-react';
 import type { RebaseAction, RebaseCommit } from '../types';
@@ -23,6 +24,8 @@ interface Row {
   action: RebaseAction;
   message: string;
 }
+
+const ALT = /Mac/.test(navigator.platform) ? '⌥' : 'Alt+';
 
 const ACTIONS: { action: RebaseAction; key: string; label: string; title: string }[] = [
   { action: 'pick', key: 'p', label: 'Pick', title: 'Keep this commit' },
@@ -89,7 +92,7 @@ export function InteractiveRebase({ branch, base, commits, onCancel, onStart }: 
           Interactive rebase <b>{branch}</b> onto <code>{base.slice(0, 7)}</code>
         </div>
         <div className="rebase-help">
-          Newest commit at the top. Keys: <kbd>P</kbd>ick <kbd>R</kbd>eword <kbd>S</kbd>quash <kbd>F</kbd>ixup <kbd>D</kbd>rop, <kbd>⌥↑</kbd>/<kbd>⌥↓</kbd> to
+          Newest commit at the top. Keys: <kbd>P</kbd>ick <kbd>R</kbd>eword <kbd>S</kbd>quash <kbd>F</kbd>ixup <kbd>D</kbd>rop, <kbd>{ALT}↑</kbd>/<kbd>{ALT}↓</kbd> to
           move.
         </div>
         <div className="rebase-list">
@@ -143,7 +146,7 @@ export function InteractiveRebase({ branch, base, commits, onCancel, onStart }: 
           <button className="btn" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={!!problem || unchanged} onClick={start} title="⌘/Ctrl + Enter">
+          <button className="btn btn-primary" disabled={!!problem || unchanged} onClick={start} title={shortcut('Enter')}>
             Start Rebase
           </button>
         </div>

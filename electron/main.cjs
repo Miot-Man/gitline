@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -7,11 +7,16 @@ const { ops } = require('./git.cjs');
 let win = null;
 const watchers = new Map();
 
+// --user-data-dir only moves Chromium's storage; point Gitline's own files (recent repos) there too,
+// so tests and separate profiles never touch the real profile.
+const userDataArg = process.argv.find((a) => a.startsWith('--user-data-dir='));
+if (userDataArg) app.setPath('userData', path.resolve(userDataArg.slice('--user-data-dir='.length)));
+
 // The app used to be called GitMan; carry its settings (recent repos, open tabs) over once.
 try {
   const oldDir = path.join(app.getPath('appData'), 'GitMan');
   const newDir = app.getPath('userData');
-  if (fs.existsSync(oldDir) && !fs.existsSync(path.join(newDir, 'recent.json'))) {
+  if (!userDataArg && fs.existsSync(oldDir) && !fs.existsSync(path.join(newDir, 'recent.json'))) {
     for (const item of ['recent.json', 'Local Storage']) {
       if (fs.existsSync(path.join(oldDir, item))) fs.cpSync(path.join(oldDir, item), path.join(newDir, item), { recursive: true, force: true });
     }
@@ -99,6 +104,12 @@ ipcMain.handle('repo:validate', async (_e, p) => {
   }
 });
 
+// Native UI (scrollbars, dialogs, menus) follows the theme chosen in Settings.
+ipcMain.handle('theme:set', (_e, theme) => {
+  nativeTheme.themeSource = ['light', 'dark'].includes(theme) ? theme : 'system';
+  if (win && !win.isDestroyed()) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1b1d23' : '#f5f6f8');
+});
+
 ipcMain.handle('recent:get', () => readRecent());
 ipcMain.handle('recent:add', (_e, p) => writeRecent([p, ...readRecent().filter((x) => x !== p)]));
 ipcMain.handle('recent:remove', (_e, p) => writeRecent(readRecent().filter((x) => x !== p)));
@@ -112,6 +123,44 @@ ipcMain.handle('shell:terminal', (_e, p) => {
   else spawn('x-terminal-emulator', [], { cwd: p, detached: true });
 });
 
+// ---------- external editor ----------
+// Where VS Code's CLI usually lives; Finder-launched apps don't get the shell PATH.
+const EDITOR_CANDIDATES = {
+  darwin: ['/usr/local/bin/code', '/opt/homebrew/bin/code', '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'],
+  win32: [
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd'),
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft VS Code', 'bin', 'code.cmd'),
+  ],
+  linux: ['/usr/bin/code', '/usr/local/bin/code', '/snap/bin/code', '/usr/bin/codium'],
+};
+
+// Opens the repo (or a file in it, at a line) in the configured editor.
+// VS Code-style editors get `<repo> --goto file:line`; anything else just gets the path.
+function openInEditor(repo, file, line, command) {
+  let exe;
+  let extra = [];
+  const cmd = (command || '').trim();
+  if (!cmd) exe = (EDITOR_CANDIDATES[process.platform] || []).find((p) => fs.existsSync(p)) || 'code';
+  else if (fs.existsSync(cmd)) exe = cmd;
+  else [exe, ...extra] = cmd.split(/\s+/);
+  const target = file ? path.join(repo, file) : repo;
+  const codeLike = /^(code|code-insiders|codium|cursor|windsurf)(\.cmd|\.exe)?$/i.test(path.basename(exe));
+  const args = [...extra, ...(codeLike && file ? [repo, '--goto', `${target}:${line || 1}`] : [target])];
+  // .cmd launchers on Windows need a shell, and then every argument must be quoted by hand.
+  const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(exe);
+  const q = (a) => (useShell ? `"${a}"` : a);
+  return new Promise((resolve, reject) => {
+    const child = spawn(q(exe), args.map(q), { detached: true, stdio: 'ignore', shell: useShell });
+    child.on('error', () => reject(new Error(`Couldn't start "${cmd || 'code'}". Set your editor's command in Settings.`)));
+    child.on('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
+ipcMain.handle('shell:editor', (_e, repo, file, line, command) => openInEditor(repo, file, line, command));
+
 // ---------- window ----------
 function buildMenu() {
   const isMac = process.platform === 'darwin';
@@ -124,6 +173,8 @@ function buildMenu() {
         { label: 'Open Repository…', accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'open') },
         { label: 'Clone Repository…', accelerator: 'CmdOrCtrl+N', click: () => send('menu', 'clone') },
         { label: 'Init Repository…', accelerator: 'CmdOrCtrl+I', click: () => send('menu', 'init') },
+        { type: 'separator' },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('menu', 'settings') },
         { type: 'separator' },
         { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => send('menu', 'close-tab') },
         ...(isMac ? [] : [{ role: 'quit' }]),
@@ -174,6 +225,8 @@ function createWindow() {
     backgroundColor: '#1b1d23',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 14, y: 12 },
+    // macOS and Windows take the icon from the app bundle / exe; Linux needs it on the window.
+    ...(process.platform === 'linux' ? { icon: path.join(__dirname, '..', 'build', 'icon.png') } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -185,7 +238,9 @@ function createWindow() {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  if (process.env.VITE_DEV_SERVER_URL) win.loadURL(process.env.VITE_DEV_SERVER_URL);
+  // `npm run dev` passes --dev to load the Vite dev server (works the same on every OS).
+  const devUrl = process.env.VITE_DEV_SERVER_URL || (process.argv.includes('--dev') ? 'http://127.0.0.1:5173' : null);
+  if (devUrl) win.loadURL(devUrl);
   else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.on('focus', () => send('focus'));
   win.on('closed', () => (win = null));
