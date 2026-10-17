@@ -216,7 +216,7 @@ const nameFromUrl = (url: string) =>
   url
     .trim()
     .replace(/\/+$/, '')
-    .split(/[/:]/)
+    .split(/[/:\\]/)
     .pop()
     ?.replace(/\.git$/, '') ?? '';
 
@@ -226,7 +226,7 @@ const slugFromUrl = (url: string) =>
     .trim()
     .replace(/\.git$/, '')
     .replace(/\/+$/, '')
-    .split(/[/:]/)
+    .split(/[/:\\]/)
     .slice(-2)
     .join('/')
     .toLowerCase();
