@@ -237,7 +237,12 @@ pub fn open_repo(repo: Repo, highlighting: Highlighting) -> Result<(AppWindow, R
     app.on_unstage_file(with_i(|c, i| c.act("Unstaged", |s| s.unstage_file(i as usize))));
     app.on_stage_all(with(|c| c.act("Staged all files", Session::stage_all)));
     app.on_unstage_all(with(|c| c.act("Unstaged all files", Session::unstage_all)));
-    app.on_close_diff(with(|c| c.act("", |s| Ok(s.close_diff()))));
+    app.on_close_diff(with(|c| {
+        c.act("", |s| {
+            s.close_diff();
+            Ok(())
+        })
+    }));
     app.on_toggle_file(with(|c| c.act("Done", Session::toggle_open_file)));
     app.on_apply_hunk(with_i(|c, h| c.act("Applied hunk", |s| s.apply_hunk(h as usize))));
     app.on_apply_lines(with(|c| {

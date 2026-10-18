@@ -1485,8 +1485,10 @@ name = "gitline-slint"
 version = "0.1.0"
 dependencies = [
  "gitline-core",
+ "i-slint-backend-testing",
  "slint",
  "slint-build",
+ "tempfile",
 ]
 
 [[package]]

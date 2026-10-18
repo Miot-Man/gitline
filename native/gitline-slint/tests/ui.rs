@@ -68,7 +68,7 @@ fn stages_hunks_and_lines_and_commits_at_the_minimum_size() {
     assert_eq!(app.get_commits().row_count(), 4);
     assert!(app.get_wip_selected());
     assert!(app.get_wip_label().contains("2 unstaged"));
-    for label in ["Uncommitted changes", "Say hi", "Side work", "Summary", "Description", "Commit", "Stage all"] {
+    for label in ["Uncommitted changes", "Say hi", "Side work", "Summary", "Description", "Commit changes", "Stage all"] {
         assert_on_screen(&app, label);
     }
     let main = app.get_commits().row_data(1).unwrap();
@@ -114,7 +114,7 @@ fn stages_hunks_and_lines_and_commits_at_the_minimum_size() {
     assert_eq!(app.get_staged().row_count(), 2);
     app.set_summary("Update notes".into());
     app.set_description("Two lines.".into());
-    click(&app, "Commit");
+    click(&app, "Commit changes");
     assert!(!app.get_status_error(), "{}", app.get_status_text());
     assert_eq!(git(&repo, &["log", "-1", "--format=%B"]), "Update notes\n\nTwo lines.");
     assert_eq!(app.get_summary(), "");

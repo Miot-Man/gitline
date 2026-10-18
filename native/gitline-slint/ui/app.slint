@@ -117,7 +117,7 @@ component PillView inherits Rectangle {
 
 // One row of the history: ref labels, the graph cell and the commit's text.
 component CommitRowView inherits Rectangle {
-    in property <CommitRow> row;
+    in property <CommitRow> item;
     in property <int> index;
     in property <bool> selected;
     in property <length> refs-width;
@@ -125,9 +125,9 @@ component CommitRowView inherits Rectangle {
     in property <string> wip-label;
     callback select(int);
     height: 34px;
-    background: root.selected ? root.row.node-color.with-alpha(0.14) : touch.has-hover ? Theme.row-hover : transparent;
+    background: root.selected ? root.item.node-color.with-alpha(0.14) : touch.has-hover ? Theme.row-hover : transparent;
     accessible-role: list-item;
-    accessible-label: root.row.wip ? "Uncommitted changes" : root.row.subject;
+    accessible-label: root.item.wip ? "Uncommitted changes" : root.item.subject;
     accessible-item-selectable: true;
     accessible-item-selected: root.selected;
     accessible-action-default => { root.select(root.index); }
@@ -135,7 +135,7 @@ component CommitRowView inherits Rectangle {
     if root.selected: Rectangle {
         x: 0;
         width: 2px;
-        background: root.row.node-color;
+        background: root.item.node-color;
     }
     HorizontalLayout {
         Rectangle {
@@ -145,17 +145,17 @@ component CommitRowView inherits Rectangle {
                 padding-left: 8px;
                 spacing: 4px;
                 alignment: start;
-                for p in root.row.pills: PillView {
+                for p in root.item.pills: PillView {
                     y: (parent.height - self.height) / 2;
                     pill: p;
-                    tag: root.row.node-color;
+                    tag: root.item.node-color;
                 }
             }
         }
         Rectangle {
             width: root.graph-width;
             clip: true;
-            for l in root.row.lines: Path {
+            for l in root.item.lines: Path {
                 width: parent.width;
                 height: parent.height;
                 viewbox-width: self.width / 1px;
@@ -167,45 +167,45 @@ component CommitRowView inherits Rectangle {
                 stroke-line-join: round;
             }
             // Node: hollow circle (commit), ring with a dot (merge), filled with a halo (HEAD), dashed (WIP).
-            if root.row.node == 2: Rectangle {
-                x: root.row.node-x - 8.5px;
+            if root.item.node == 2: Rectangle {
+                x: root.item.node-x - 8.5px;
                 y: 17px - 8.5px;
                 width: 17px;
                 height: 17px;
                 border-radius: 8.5px;
                 border-width: 2.5px;
-                border-color: root.row.node-color.with-alpha(0.35);
+                border-color: root.item.node-color.with-alpha(0.35);
             }
             Rectangle {
-                x: root.row.node-x - self.width / 2;
+                x: root.item.node-x - self.width / 2;
                 y: 17px - self.height / 2;
-                width: root.row.node == 0 || root.row.node == 3 ? 10px : 11px;
+                width: root.item.node == 0 || root.item.node == 3 ? 10px : 11px;
                 height: self.width;
                 border-radius: self.width / 2;
-                background: root.row.node == 2 ? root.row.node-color : Theme.bg-graph;
-                border-width: root.row.node == 2 ? 0 : 2.5px;
-                border-color: root.row.node == 3 ? Theme.orange : root.row.node-color;
+                background: root.item.node == 2 ? root.item.node-color : Theme.bg-graph;
+                border-width: root.item.node == 2 ? 0 : 2.5px;
+                border-color: root.item.node == 3 ? Theme.orange : root.item.node-color;
             }
-            if root.row.node == 1: Rectangle {
-                x: root.row.node-x - 2px;
+            if root.item.node == 1: Rectangle {
+                x: root.item.node-x - 2px;
                 y: 15px;
                 width: 4px;
                 height: 4px;
                 border-radius: 2px;
-                background: root.row.node-color;
+                background: root.item.node-color;
             }
         }
         Text {
             horizontal-stretch: 1;
-            text: root.row.wip ? root.wip-label : root.row.subject;
-            color: root.row.wip ? Theme.orange : root.selected ? Theme.text-strong : Theme.text;
-            font-italic: root.row.wip;
+            text: root.item.wip ? root.wip-label : root.item.subject;
+            color: root.item.wip ? Theme.orange : root.selected ? Theme.text-strong : Theme.text;
+            font-italic: root.item.wip;
             vertical-alignment: center;
             overflow: elide;
         }
         Text {
             width: 120px;
-            text: root.row.author;
+            text: root.item.author;
             color: Theme.muted;
             font-size: 12px;
             vertical-alignment: center;
@@ -213,7 +213,7 @@ component CommitRowView inherits Rectangle {
         }
         Text {
             width: 112px;
-            text: root.row.date;
+            text: root.item.date;
             color: Theme.muted;
             font-size: 12px;
             vertical-alignment: center;
@@ -312,7 +312,7 @@ component PanelHeader inherits Rectangle {
 // One line of the diff: gutters, sign and the highlighted text. Double-clicking a line swaps it for a
 // read-only text field so characters within it can be selected.
 component DiffRowView inherits Rectangle {
-    in property <DiffRow> row;
+    in property <DiffRow> item;
     in property <int> index;
     in property <bool> selected;
     in property <bool> can-apply;
@@ -325,7 +325,7 @@ component DiffRowView inherits Rectangle {
     callback copy-chars(string);
     height: 20px;
     clip: true;
-    background: root.row.kind == 0 ? Theme.bg-panel-2 : root.row.kind == 1 ? Theme.diff-add-bg : root.row.kind == 2 ? Theme.diff-del-bg : transparent;
+    background: root.item.kind == 0 ? Theme.bg-panel-2 : root.item.kind == 1 ? Theme.diff-add-bg : root.item.kind == 2 ? Theme.diff-del-bg : transparent;
 
     touch := TouchArea {
         pointer-event(e) => {
@@ -338,14 +338,14 @@ component DiffRowView inherits Rectangle {
                 root.drag-to(root.index + floor(self.mouse-y / root.height));
             }
         }
-        double-clicked => { if (root.row.kind != 0) { root.start-char-select(root.index); } }
+        double-clicked => { if (root.item.kind != 0) { root.start-char-select(root.index); } }
     }
 
-    if root.row.kind == 0: HorizontalLayout {
+    if root.item.kind == 0: HorizontalLayout {
         padding-left: 10px;
         padding-right: 8px;
         Text {
-            text: root.row.text;
+            text: root.item.text;
             color: Theme.muted;
             font-family: Theme.mono;
             font-size: Theme.mono-size;
@@ -358,18 +358,18 @@ component DiffRowView inherits Rectangle {
             height: 18px;
             small: true;
             text: root.hunk-action;
-            accessible-label: root.hunk-action + " " + (root.row.hunk + 1);
-            clicked => { root.apply-hunk(root.row.hunk); }
+            accessible-label: root.hunk-action + " " + (root.item.hunk + 1);
+            clicked => { root.apply-hunk(root.item.hunk); }
         }
     }
-    if root.row.kind != 0: HorizontalLayout {
+    if root.item.kind != 0: HorizontalLayout {
         Rectangle {
             width: 44px;
-            background: root.row.kind == 1 ? Theme.diff-add-ln-bg : root.row.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
+            background: root.item.kind == 1 ? Theme.diff-add-ln-bg : root.item.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
             Text {
                 x: 0;
                 width: parent.width - 6px;
-                text: root.row.old-no;
+                text: root.item.old-no;
                 color: Theme.ln;
                 font-family: Theme.mono;
                 font-size: 11px;
@@ -379,11 +379,11 @@ component DiffRowView inherits Rectangle {
         }
         Rectangle {
             width: 44px;
-            background: root.row.kind == 1 ? Theme.diff-add-ln-bg : root.row.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
+            background: root.item.kind == 1 ? Theme.diff-add-ln-bg : root.item.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
             Text {
                 x: 0;
                 width: parent.width - 6px;
-                text: root.row.new-no;
+                text: root.item.new-no;
                 color: Theme.ln;
                 font-family: Theme.mono;
                 font-size: 11px;
@@ -393,8 +393,8 @@ component DiffRowView inherits Rectangle {
         }
         Text {
             width: 18px;
-            text: root.row.kind == 1 ? "+" : root.row.kind == 2 ? "-" : "";
-            color: root.row.kind == 1 ? Theme.diff-add-sign : Theme.diff-del-sign;
+            text: root.item.kind == 1 ? "+" : root.item.kind == 2 ? "-" : "";
+            color: root.item.kind == 1 ? Theme.diff-add-sign : Theme.diff-del-sign;
             font-family: Theme.mono;
             font-size: Theme.mono-size;
             horizontal-alignment: center;
@@ -403,9 +403,9 @@ component DiffRowView inherits Rectangle {
         if !root.char-select: HorizontalLayout {
             alignment: start;
             horizontal-stretch: 1;
-            for s in root.row.segs: Rectangle {
+            for s in root.item.segs: Rectangle {
                 width: t.preferred-width;
-                background: s.changed ? (root.row.kind == 1 ? Theme.diff-add-word : Theme.diff-del-word) : transparent;
+                background: s.changed ? (root.item.kind == 1 ? Theme.diff-add-word : Theme.diff-del-word) : transparent;
                 t := Text {
                     text: s.text;
                     color: s.color;
@@ -418,7 +418,7 @@ component DiffRowView inherits Rectangle {
         }
         if root.char-select: line-input := TextInput {
             horizontal-stretch: 1;
-            text: root.row.text;
+            text: root.item.text;
             read-only: true;
             single-line: true;
             color: Theme.text-strong;
@@ -573,7 +573,7 @@ export component AppWindow inherits Window {
                     }
                     graph-list := ListView {
                         for row[i] in root.commits: CommitRowView {
-                            row: row;
+                            item: row;
                             index: i;
                             selected: i == root.selected-commit;
                             refs-width: root.refs-width;
@@ -661,7 +661,7 @@ export component AppWindow inherits Window {
                         }
                         ListView {
                             for row[i] in root.diff-rows: DiffRowView {
-                                row: row;
+                                item: row;
                                 index: i;
                                 selected: root.sel-anchor >= 0 && i >= root.sel-first && i <= root.sel-last && root.char-row != i;
                                 can-apply: root.diff-can-apply;
@@ -746,6 +746,7 @@ export component AppWindow inherits Window {
                     }
                     // Commit box
                     Rectangle {
+                        vertical-stretch: 0;
                         background: Theme.bg-panel-2;
                         Rectangle { y: 0; height: 1px; background: Theme.border-soft; }
                         VerticalLayout {
@@ -757,6 +758,7 @@ export component AppWindow inherits Window {
                                 font-weight: 600;
                             }
                             summary-input := LineEdit {
+                                height: 30px;
                                 placeholder-text: "Summary";
                                 text <=> root.summary;
                                 accessible-label: "Summary";
@@ -772,7 +774,7 @@ export component AppWindow inherits Window {
                                 primary: true;
                                 text: root.staged.length == 0 ? "Stage files to commit"
                                     : "Commit " + root.staged.length + (root.staged.length == 1 ? " file" : " files");
-                                accessible-label: "Commit";
+                                accessible-label: "Commit changes";
                                 enabled: root.staged.length > 0 && root.summary != "";
                                 clicked => { root.commit(); }
                             }
