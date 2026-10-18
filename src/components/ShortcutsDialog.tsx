@@ -35,6 +35,10 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
     ],
   },
   {
+    title: 'Conflicts',
+    items: [[`${ALT}↑ / ${ALT}↓`, 'Previous / next conflict in the conflict editor']],
+  },
+  {
     title: 'Committing',
     items: [[shortcut('Enter'), 'Commit (from the message box)']],
   },

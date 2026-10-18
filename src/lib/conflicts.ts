@@ -155,3 +155,53 @@ export function sideActions(kind: ConflictKind): { ours: string; theirs: string 
       return { ours: 'Changed the file', theirs: 'Changed the file' };
   }
 }
+
+const splitLines = (s: string) => (s ? s.split(/(?<=\n)/) : []);
+export const stripEol = (line: string) => line.replace(/\r?\n$/, '');
+
+export interface NumberedLine {
+  no: number;
+  text: string;
+}
+
+// Where a conflict lands in the result: its first line, the result line numbers of each side (null when
+// that side isn't in the result), and the unchanged lines just above and below it.
+export interface ConflictLayout {
+  start: number;
+  ours: number | null;
+  theirs: number | null;
+  before: NumberedLine[];
+  after: NumberedLine[];
+}
+
+// Line numbers follow the result the choices produce; an undecided conflict keeps its markers there.
+export function conflictLayout(segs: Segment[], choices: Record<number, Choice>, context = 3): Record<number, ConflictLayout> {
+  const out: Record<number, ConflictLayout> = {};
+  const starts: number[] = [];
+  let line = 1;
+  segs.forEach((s, i) => {
+    starts.push(line);
+    line += splitLines(s.kind === 'text' ? s.text : resolved(s, choices[i])).length;
+  });
+  const numbered = (i: number) => {
+    const s = segs[i];
+    return s?.kind === 'text' ? splitLines(s.text).map((t, k) => ({ no: starts[i] + k, text: stripEol(t) })) : [];
+  };
+  segs.forEach((s, i) => {
+    if (s.kind !== 'conflict') return;
+    const start = starts[i];
+    const nOurs = splitLines(s.ours).length;
+    const nTheirs = splitLines(s.theirs).length;
+    const at: Record<string, [number | null, number | null]> = {
+      ours: [start, null],
+      theirs: [null, start],
+      both: [start, start + nOurs],
+      'both-reverse': [start + nTheirs, start],
+      // <<<<<<< line, ours, =======, theirs, >>>>>>>
+      none: [start + 1, start + nOurs + 2],
+    };
+    const [ours, theirs] = at[choices[i] ?? 'none'];
+    out[i] = { start, ours, theirs, before: numbered(i - 1).slice(-context), after: numbered(i + 1).slice(0, context) };
+  });
+  return out;
+}

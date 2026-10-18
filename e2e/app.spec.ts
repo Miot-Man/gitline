@@ -228,11 +228,95 @@ test('with diff3 markers the conflict card shows the original version', async ({
   await page.locator('.file-row', { hasText: 'config.txt' }).locator('.file-name').click();
   const original = page.locator('.conflict-base');
   await expect(original.locator('.conflict-label')).toHaveText('Original');
-  await expect(original.locator('pre')).toHaveText('speed = 100\n');
+  await expect(original.locator('.conflict-code')).toHaveText('speed = 100');
   await original.locator('.conflict-label').click();
-  await expect(original.locator('pre')).toHaveCount(0);
+  await expect(original.locator('.conflict-code')).toHaveCount(0);
   await page.locator('.conflict-card .seg button', { hasText: /^Current branch$/ }).click();
   await expect(page.locator('.conflict-result textarea')).toHaveValue('speed = 80\n');
+});
+
+test('conflict cards show context, line numbers, syntax and changed words, and step between conflicts', async ({ gl }) => {
+  const { page } = gl;
+  const lines = (speed: string, turn: string) =>
+    ['#include <stdio.h>', '', 'int a = 1;', 'int b = 2;', 'int c = 3;', `int speed = ${speed};`, 'int d = 4;', 'int e = 5;', 'int f = 6;', 'int g = 7;', `int turn = ${turn};`, 'int h = 8;', ''].join('\n');
+  gl.write('main.c', lines('100', '30'));
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'tuning');
+  gl.write('main.c', lines('120', '35'));
+  gl.git('commit', '-qam', 'Tune');
+  gl.git('checkout', '-q', 'main');
+  gl.write('main.c', lines('80', '25'));
+  gl.git('commit', '-qam', 'Slow');
+  try {
+    gl.git('merge', 'tuning');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  await page.locator('.file-row', { hasText: 'main.c' }).locator('.file-name').click();
+  const cards = page.locator('.conflict-card');
+  await expect(cards).toHaveCount(2);
+  const first = cards.nth(0);
+  // Three unchanged lines above and below, numbered as in the file.
+  await expect(first.locator('.conflict-code.before .cl')).toHaveCount(3);
+  await expect(first.locator('.conflict-code.before .cl').first()).toHaveText('3int a = 1;');
+  await expect(first.locator('.conflict-code.after .cl').first()).toHaveText('11int d = 4;');
+  // Undecided, the result still holds the markers: ours is line 7, theirs line 9.
+  await expect(first.locator('.conflict-code.ours .cl-no')).toHaveText('7');
+  await expect(first.locator('.conflict-code.theirs .cl-no')).toHaveText('9');
+  await expect(first.locator('.conflict-code.ours .hljs-type, .conflict-code.ours .hljs-keyword').first()).toBeVisible();
+  await expect(first.locator('.conflict-code.ours .wd')).toHaveText('80');
+  await expect(first.locator('.conflict-code.theirs .wd')).toHaveText('120');
+
+  // Choosing a side renumbers what follows.
+  await first.locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect(first.locator('.conflict-code.theirs .cl-no')).toHaveText('6');
+  await expect(first.locator('.conflict-code.after .cl').first()).toHaveText('7int d = 4;');
+
+  // Next / previous move the current card.
+  await expect(first).toHaveClass(/current/);
+  await page.getByRole('button', { name: 'Next conflict' }).click();
+  await expect(cards.nth(1)).toHaveClass(/current/);
+  await expect(cards.nth(1)).toBeInViewport();
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(first).toHaveClass(/current/);
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(cards.nth(1)).toHaveClass(/current/);
+  // Still in the conflict editor: Alt+arrows don't step to another file.
+  await expect(page.locator('.conflict-editor')).toBeVisible();
+
+  await cards.nth(1).locator('.seg button', { hasText: /^Current branch$/ }).click();
+  await expect(page.locator('.conflict-result textarea')).toHaveValue(lines('120', '25'));
+});
+
+test('choosing a side scrolls the result to that conflict', async ({ gl }) => {
+  const { page } = gl;
+  const file = (top: string, bottom: string) => [top, ...Array.from({ length: 80 }, (_, i) => `line ${i}`), bottom, ''].join('\n');
+  gl.write('long.txt', file('top', 'bottom'));
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'other');
+  gl.write('long.txt', file('top theirs', 'bottom theirs'));
+  gl.git('commit', '-qam', 'Theirs');
+  gl.git('checkout', '-q', 'main');
+  gl.write('long.txt', file('top ours', 'bottom ours'));
+  gl.git('commit', '-qam', 'Ours');
+  try {
+    gl.git('merge', 'other');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  await page.locator('.file-row', { hasText: 'long.txt' }).locator('.file-name').click();
+  const result = page.locator('.conflict-result textarea');
+  const scrollTop = () => result.evaluate((el) => el.scrollTop);
+  await page.locator('.conflict-card').nth(1).locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect.poll(scrollTop).toBeGreaterThan(1000);
+  await page.locator('.conflict-card').nth(0).locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect.poll(scrollTop).toBe(0);
 });
 
 test('interactive rebase fixes up a commit', async ({ gl }) => {

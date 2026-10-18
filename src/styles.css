@@ -2617,20 +2617,6 @@ kbd {
 .conflict-side + .conflict-side {
   border-left: 1px solid var(--border-soft);
 }
-.conflict-side pre {
-  margin: 4px 0 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.conflict-side.ours pre {
-  color: var(--ours);
-}
-.conflict-side.theirs pre {
-  color: var(--theirs);
-}
 .conflict-side.dropped {
   opacity: 0.35;
 }
@@ -2643,6 +2629,85 @@ kbd {
 .conflict-left {
   color: var(--orange);
 }
+/* Code in the conflict cards: one row per line, numbered as in the result. */
+.conflict-code {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.conflict-code .cl {
+  display: flex;
+}
+.conflict-code .cl-no {
+  flex: none;
+  width: 34px;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--ln);
+  user-select: none;
+}
+.conflict-code .cl-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.conflict-code.context {
+  margin: 0;
+  padding: 2px 10px;
+  opacity: 0.6;
+}
+.conflict-code.before {
+  border-bottom: 1px dashed var(--border-soft);
+}
+.conflict-code.after {
+  border-top: 1px dashed var(--border-soft);
+}
+.conflict-code.ours .cl-text {
+  color: var(--ours);
+}
+.conflict-code.theirs .cl-text {
+  color: var(--theirs);
+}
+.conflict-code.base .cl-text {
+  color: var(--muted);
+}
+.conflict-code.ours .wd {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ours) 30%, transparent);
+}
+.conflict-code.theirs .wd {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--theirs) 30%, transparent);
+}
+.conflict-card.current {
+  outline: 1px solid var(--accent);
+}
+.conflict-nav {
+  display: inline-flex;
+}
+/* Side by side needs room; in a narrow middle column (the minimum window size) the sides stack. */
+.conflict-body {
+  container: conflicts / inline-size;
+}
+@container conflicts (max-width: 520px) {
+  .conflict-sides {
+    grid-template-columns: 1fr;
+  }
+  .conflict-side + .conflict-side {
+    border-left: none;
+    border-top: 1px solid var(--border-soft);
+  }
+}
+/* Conflicted files come first and get the room their rows need, up to a share of the panel. */
+.file-section.conflicted {
+  flex: 0 0 auto;
+  max-height: 60%;
+}
+.file-sections:has(.conflicted) .file-section:not(.conflicted) {
+  min-height: 31px;
+}
 .conflict-base {
   padding: 6px 10px 8px;
   border-bottom: 1px solid var(--border-soft);
@@ -2653,7 +2718,6 @@ kbd {
   gap: 4px;
   cursor: pointer;
 }
-.conflict-base pre,
 .conflict-surviving {
   margin: 4px 0 0;
   font-family: var(--mono);
@@ -2661,9 +2725,6 @@ kbd {
   line-height: 18px;
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--muted);
-}
-.conflict-surviving {
   max-height: 60vh;
   overflow: auto;
   padding: 6px 10px;

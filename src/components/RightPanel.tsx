@@ -32,6 +32,7 @@ function useFileStepper(files: FileChange[], activePath: string | null, open: (f
     if (!activePath) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      if (e.altKey || e.metaKey || e.ctrlKey) return;
       const t = e.target;
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable)) return;
       const i = files.findIndex((f) => f.path === activePath);
@@ -222,7 +223,7 @@ export function StagingPanel(p: StagingProps) {
 
       <div className="file-sections">
         {status.conflicted.length > 0 && (
-          <div className="file-section">
+          <div className="file-section conflicted">
             <div className="file-section-header conflict">
               <span>Conflicted Files ({status.conflicted.length})</span>
             </div>

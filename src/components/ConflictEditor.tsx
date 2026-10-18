@@ -1,8 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
-import { X, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { X, AlertTriangle, ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
 import { git } from '../api';
 import type { ConflictFile, FileChange, FileEncoding } from '../types';
-import { hasMarkers, isDeletion, kindLabel, parseConflicts, resolved, sideActions, type Choice, type Segment, type Sides } from '../lib/conflicts';
+import {
+  conflictLayout,
+  hasMarkers,
+  isDeletion,
+  kindLabel,
+  parseConflicts,
+  resolved,
+  sideActions,
+  stripEol,
+  type Choice,
+  type NumberedLine,
+  type Segment,
+  type Sides,
+} from '../lib/conflicts';
+import { highlightLines, isLoaded, languageFor, loadLanguage, markRanges } from '../lib/highlight';
+import { useSettings } from '../lib/settings';
+import { changedRanges, wordDiff } from '../lib/wordDiff';
 
 interface Props {
   repo: string;
@@ -20,6 +36,32 @@ const ENCODING_LABEL: Record<FileEncoding, string> = { 'utf-8': 'UTF-8', 'utf-8-
 // Characters a Latin-1 file can't hold (anything past U+00FF).
 const notLatin1 = (s: string) => [...new Set([...s].filter((c) => c.codePointAt(0)! > 0xff))];
 
+const ALT = /Mac/.test(navigator.platform) ? '⌥' : 'Alt+';
+const RESULT_LINE_H = 18; // matches .conflict-result textarea's line-height
+
+const lineList = (s: string) => (s ? s.split(/(?<=\n)/).map(stripEol) : []);
+
+// Lines of code with result line numbers (none when `start` is null). `html` comes from highlight.js and
+// markRanges, which escape the source text, so it is safe to insert.
+function CodeLines({ html, start, className }: { html: string[]; start: number | null; className: string }) {
+  return (
+    <div className={`conflict-code ${className}`}>
+      {html.map((h, i) => (
+        <div key={i} className="cl">
+          <span className="cl-no">{start === null ? '' : start + i}</span>
+          <span className="cl-text" dangerouslySetInnerHTML={{ __html: h || ' ' }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Context({ lines, lang, where }: { lines: NumberedLine[]; lang: string | null; where: 'before' | 'after' }) {
+  const html = useMemo(() => highlightLines(lines.map((l) => l.text), lang), [lines, lang]);
+  if (!lines.length) return null;
+  return <CodeLines html={html} start={lines[0].no} className={`context ${where}`} />;
+}
+
 export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, onKeep, onDelete }: Props) {
   const path = file.path;
   const [content, setContent] = useState<ConflictFile | null>(null);
@@ -28,7 +70,20 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
   const [output, setOutput] = useState('');
   const [edited, setEdited] = useState(false);
   const [baseHidden, setBaseHidden] = useState<Set<number>>(new Set());
+  const [current, setCurrent] = useState(0);
+  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const resultRef = useRef<HTMLTextAreaElement>(null);
+  const scrollResultTo = useRef<number | null>(null);
   const deletion = isDeletion(file.conflict);
+
+  // Same language rules and on/off setting as the diff view.
+  const { syntaxHighlighting, syntaxRules } = useSettings();
+  const chosen = syntaxHighlighting ? languageFor(path, syntaxRules) : null;
+  const [, setLoaded] = useState(0);
+  useEffect(() => {
+    if (chosen && !isLoaded(chosen)) loadLanguage(chosen).then(() => setLoaded((n) => n + 1));
+  }, [chosen]);
+  const lang = chosen && isLoaded(chosen) ? chosen : null;
 
   useEffect(() => {
     let alive = true;
@@ -51,6 +106,29 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
   const segs = useMemo(() => (text === null || deletion ? [] : parseConflicts(text)), [text, deletion]);
   const conflicts = segs.flatMap((s, i) => (s.kind === 'conflict' ? [i] : []));
   const binary = text?.includes('\0');
+  const layout = useMemo(() => conflictLayout(segs, choices), [segs, choices]);
+
+  // Each side highlighted as a whole, with the words that differ between the two sides marked.
+  const sideHtml = useMemo(
+    () =>
+      Object.fromEntries(
+        segs.flatMap((s, i) => {
+          if (s.kind !== 'conflict') return [];
+          const ours = lineList(s.ours);
+          const theirs = lineList(s.theirs);
+          const oursHtml = highlightLines(ours, lang);
+          const theirsHtml = highlightLines(theirs, lang);
+          for (let k = 0; k < Math.min(ours.length, theirs.length); k++) {
+            const d = ours[k] !== theirs[k] && wordDiff(ours[k], theirs[k]);
+            if (!d) continue;
+            oursHtml[k] = markRanges(oursHtml[k], changedRanges(d[0]));
+            theirsHtml[k] = markRanges(theirsHtml[k], changedRanges(d[1]));
+          }
+          return [[i, { ours: oursHtml, theirs: theirsHtml, base: s.base === null ? null : highlightLines(lineList(s.base), lang) }]];
+        })
+      ) as Record<number, { ours: string[]; theirs: string[]; base: string[] | null }>,
+    [segs, lang]
+  );
 
   // The result follows the choices until the user types into it.
   useEffect(() => {
@@ -58,9 +136,32 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
     setOutput(segs.map((s, i) => (s.kind === 'text' ? s.text : resolved(s, choices[i]))).join(''));
   }, [segs, choices, edited]);
 
+  // After a choice, show the matching place in the result.
+  useEffect(() => {
+    const line = scrollResultTo.current;
+    if (line === null || !resultRef.current) return;
+    scrollResultTo.current = null;
+    resultRef.current.scrollTop = Math.max(0, (line - 3) * RESULT_LINE_H);
+  }, [output]);
+
+  const goTo = (n: number) => {
+    if (!conflicts.length) return;
+    const next = Math.max(0, Math.min(conflicts.length - 1, n));
+    setCurrent(next);
+    cardRefs.current[next]?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+  const stepRef = useRef((d: number) => goTo(current + d));
+  stepRef.current = (d: number) => goTo(current + d);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) onClose();
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+      if (e.key === 'Escape' && !typing) onClose();
+      // Alt+↑ / Alt+↓: previous / next conflict.
+      if (e.altKey && !typing && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        stepRef.current(e.key === 'ArrowDown' ? 1 : -1);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -68,6 +169,8 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
 
   const choose = (i: number, c: Choice) => {
     setEdited(false);
+    setCurrent(conflicts.indexOf(i));
+    scrollResultTo.current = conflictLayout(segs, { ...choices, [i]: c })[i].start;
     setChoices((cur) => ({ ...cur, [i]: c }));
   };
   const chooseAll = (c: Choice) => {
@@ -155,6 +258,22 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
             {done} of {conflicts.length} resolved
           </span>
         )}
+        {!binary && conflicts.length > 1 && (
+          <span className="conflict-nav">
+            <button className="icon-btn" title={`Previous conflict (${ALT}↑)`} aria-label="Previous conflict" disabled={current === 0} onClick={() => goTo(current - 1)}>
+              <ChevronUp size={15} />
+            </button>
+            <button
+              className="icon-btn"
+              title={`Next conflict (${ALT}↓)`}
+              aria-label="Next conflict"
+              disabled={current === conflicts.length - 1}
+              onClick={() => goTo(current + 1)}
+            >
+              <ChevronDown size={15} />
+            </button>
+          </span>
+        )}
         <span className="spacer" />
         <span className="muted">{binary ? 'Take' : 'Take all'}</span>
         {(['ours', 'theirs'] as const).map((side) => (
@@ -195,8 +314,17 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
           {conflicts.map((i, n) => {
             const s = segs[i] as Extract<Segment, { kind: 'conflict' }>;
             const c = choices[i];
+            const at = layout[i];
+            const html = sideHtml[i];
             return (
-              <div key={i} className={`conflict-card${c ? ' done' : ''}`}>
+              <div
+                key={i}
+                ref={(el) => {
+                  cardRefs.current[n] = el;
+                }}
+                className={`conflict-card${c ? ' done' : ''}${n === current && conflicts.length > 1 ? ' current' : ''}`}
+                onClick={() => setCurrent(n)}
+              >
                 <div className="conflict-card-header">
                   <span>
                     Conflict {n + 1} of {conflicts.length}
@@ -216,12 +344,13 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
                     ))}
                   </span>
                 </div>
-                {s.base !== null && (
+                <Context lines={at.before} lang={lang} where="before" />
+                {html.base && (
                   <div className="conflict-base">
                     <div className="conflict-label clickable" title="The version both sides started from" onClick={() => toggleBase(i)}>
                       {baseHidden.has(i) ? <ChevronRight size={12} /> : <ChevronDown size={12} />} Original
                     </div>
-                    {!baseHidden.has(i) && <pre>{s.base || ' '}</pre>}
+                    {!baseHidden.has(i) && <CodeLines html={html.base.length ? html.base : ['']} start={null} className="base" />}
                   </div>
                 )}
                 <div className="conflict-sides">
@@ -229,15 +358,16 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
                     <div className="conflict-label" title={sides.ours.title}>
                       {sides.ours.label}
                     </div>
-                    <pre>{s.ours || ' '}</pre>
+                    <CodeLines html={html.ours.length ? html.ours : ['']} start={html.ours.length ? at.ours : null} className="ours" />
                   </div>
                   <div className={`conflict-side theirs${c === 'ours' ? ' dropped' : ''}`}>
                     <div className="conflict-label" title={sides.theirs.title}>
                       {sides.theirs.label}
                     </div>
-                    <pre>{s.theirs || ' '}</pre>
+                    <CodeLines html={html.theirs.length ? html.theirs : ['']} start={html.theirs.length ? at.theirs : null} className="theirs" />
                   </div>
                 </div>
+                <Context lines={at.after} lang={lang} where="after" />
               </div>
             );
           })}
@@ -248,6 +378,7 @@ export function ConflictEditor({ repo, file, sides, onClose, onResolve, onTake, 
               {unsavable.length > 0 && <span className="conflict-left"> · Latin-1 can't hold {unsavable.slice(0, 5).join(' ')}</span>}
             </div>
             <textarea
+              ref={resultRef}
               spellCheck={false}
               value={output}
               onChange={(e) => {

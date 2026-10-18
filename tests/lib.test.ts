@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildLinePatch, parseDiff } from '../src/lib/diff';
 import { computeGraph } from '../src/lib/graph';
-import { conflictSides, hasMarkers, kindLabel, parseConflicts, resolved } from '../src/lib/conflicts';
+import { conflictLayout, conflictSides, hasMarkers, kindLabel, parseConflicts, resolved } from '../src/lib/conflicts';
 import { cleanTemplate } from '../src/lib/settings';
 import { branchCreated, checkoutMove, headMove, refsDeleted, sameHead } from '../src/lib/undo';
 import { parseTrack } from '../src/lib/format';
@@ -107,6 +107,29 @@ describe('conflicts', () => {
   it('reads markers with Windows line endings', () => {
     const segs = parseConflicts('<<<<<<< HEAD\r\na\r\n=======\r\nb\r\n>>>>>>> x\r\n');
     expect(segs).toEqual([{ kind: 'conflict', ours: 'a\r\n', theirs: 'b\r\n', base: null, oursLabel: 'HEAD', theirsLabel: 'x' }]);
+  });
+});
+
+describe('conflictLayout', () => {
+  const file = '1\n2\n3\n4\n<<<<<<< HEAD\na\nb\n=======\nc\n>>>>>>> x\n5\n6\n<<<<<<< HEAD\nd\n=======\ne\nf\n>>>>>>> x\n7\n';
+  const segs = parseConflicts(file);
+  it('takes up to three unchanged lines around each conflict', () => {
+    const l = conflictLayout(segs, {});
+    expect(l[1].before).toEqual([2, 3, 4].map((n) => ({ no: n, text: String(n) })));
+    expect(l[1].after.map((x) => x.text)).toEqual(['5', '6']);
+    expect(l[3].before.map((x) => x.text)).toEqual(['5', '6']);
+    expect(l[3].after).toEqual([{ no: 19, text: '7' }]);
+  });
+  it('numbers lines as they land in the result', () => {
+    // Undecided: the markers are still in the result.
+    expect(conflictLayout(segs, {})[1]).toMatchObject({ start: 5, ours: 6, theirs: 9 });
+    const l = conflictLayout(segs, { 1: 'both-reverse', 3: 'ours' });
+    expect(l[1]).toMatchObject({ start: 5, ours: 6, theirs: 5 });
+    expect(l[1].after[0]).toEqual({ no: 8, text: '5' });
+    expect(l[3]).toMatchObject({ start: 10, ours: 10, theirs: null });
+    expect(l[3].after).toEqual([{ no: 11, text: '7' }]);
+    const out = segs.map((s, i) => (s.kind === 'text' ? s.text : resolved(s, ({ 1: 'both-reverse', 3: 'ours' } as const)[i]))).join('');
+    expect(out.split('\n')[10]).toBe('7');
   });
 });
 
