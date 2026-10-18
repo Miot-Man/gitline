@@ -16,6 +16,10 @@ export interface Gitline {
   /** Sends an application-menu command, the same as picking it from the menu bar. */
   menu: (cmd: string) => Promise<void>;
   open: () => Promise<void>;
+  /** Sets what the fake GitHub CLI answers (see tests/fake-gh.cjs). */
+  setGh: (fixture: object) => void;
+  /** The calls the app made to the fake GitHub CLI so far. */
+  ghCalls: () => { args: string[]; stdin: string | null }[];
 }
 
 // Each test gets a fresh repo, a fresh profile and an isolated git config.
@@ -26,7 +30,17 @@ export const test = base.extend<{ gl: Gitline }>({
     fs.mkdirSync(repo);
     const gitconfig = path.join(root, 'gitconfig');
     fs.copyFileSync(path.join(APP_DIR, 'tests', 'gitconfig'), gitconfig);
-    const env = { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1' } as Record<string, string>;
+    // gh is always the fake one, so tests never use the real GitHub account of whoever runs them.
+    const ghFixture = path.join(root, 'gh.json');
+    const ghLog = path.join(root, 'gh-log.jsonl');
+    const env = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: gitconfig,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GITLINE_GH: path.join(APP_DIR, 'tests', 'fake-gh.cjs'),
+      GITLINE_GH_FIXTURE: ghFixture,
+      GITLINE_GH_LOG: ghLog,
+    } as Record<string, string>;
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, env, encoding: 'utf8' }).trim();
     const write = (file: string, content: string) => {
       fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true });
@@ -57,6 +71,15 @@ export const test = base.extend<{ gl: Gitline }>({
         await page.reload();
         await page.waitForSelector('.toolbar');
       },
+      setGh: (fixture) => fs.writeFileSync(ghFixture, JSON.stringify(fixture)),
+      ghCalls: () =>
+        fs.existsSync(ghLog)
+          ? fs
+              .readFileSync(ghLog, 'utf8')
+              .split('\n')
+              .filter(Boolean)
+              .map((l) => JSON.parse(l))
+          : [],
     };
     await use(gl);
     await app.close();

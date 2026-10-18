@@ -31,6 +31,7 @@ import { Toolbar, PULL_LABELS, type Crumb, type PullMode } from './Toolbar';
 import { Sidebar } from './Sidebar';
 import { CommitGraph, type WipCounts } from './CommitGraph';
 import { CommitPanel, ComparePanel, StagingPanel } from './RightPanel';
+import { PrPanel } from './PrPanel';
 import { DiffView } from './DiffView';
 import { FileHistory, type FileViewMode } from './FileHistory';
 import { InteractiveRebase, type RebaseStep } from './InteractiveRebase';
@@ -135,11 +136,15 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [coAuthors, setCoAuthors] = useState<Author[]>([]);
   const [gh, setGh] = useState<GhStatus | null>(null);
   const [prs, setPrs] = useState<PullRequest[]>([]);
+  // Counts PR list loads, so an open PR panel reloads along with the list.
+  const [prsLoaded, setPrsLoaded] = useState(0);
   const [ci, setCi] = useState<Record<string, CiStatus>>({});
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [submodules, setSubmodules] = useState<Submodule[]>([]);
   const [lfs, setLfs] = useState<LfsInfo | null>(null);
+  // The pull request shown in the right panel, and the commit it was opened at.
+  const [openPr, setOpenPr] = useState<{ number: number; sha: string } | null>(null);
   const [prDraft, setPrDraft] = useState<{ head: string; needsPush: boolean; base: string; title: string } | null>(null);
   const [history, setHistory] = useState<{ undo: UndoEntry[]; redo: UndoEntry[] }>({ undo: [], redo: [] });
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -223,6 +228,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       .catch(() => setCi({}));
     try {
       setPrs(await git<PullRequest[]>('ghPrs', path));
+      setPrsLoaded((n) => n + 1);
     } catch (e) {
       setGh({ ok: false, reason: cleanError(e) });
     }
@@ -748,8 +754,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       checkoutMove(`Checkout pull request #${pr.number}`, b, a)
     );
 
-  // Shows the PR's tip in the graph. A PR opened elsewhere (e.g. by a cloud session) may not be fetched yet, so fetch it first.
+  // Opens the PR's panel and shows its tip in the graph. A PR opened elsewhere (e.g. by a cloud session) may not be fetched yet, so fetch it first.
   const selectPr = async (pr: PullRequest) => {
+    setOpenPr({ number: pr.number, sha: pr.sha });
     if (!commits.some((c) => c.sha === pr.sha)) {
       if (pr.fork) return ui.toast(`#${pr.number} comes from a fork, so its branch isn't here. Double-click it to check it out.`, 'info');
       if (!(await run(`Fetching ${pr.head}…`, () => git('fetch', path)))) return;
@@ -757,10 +764,22 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     selectSha(pr.sha);
   };
 
+  // Selecting any other commit closes the PR panel.
+  useEffect(() => {
+    setOpenPr((p) => (p && p.sha === selected ? p : null));
+  }, [selected]);
+
+  // Runs a PR action from the panel, then refreshes the PR list (its state, checks or branch may have changed).
+  const prAct = async (label: string, fn: () => Promise<unknown>, success: string) => {
+    const ok = await run(label, async () => (await fn(), true), success);
+    loadPrs();
+    return !!ok;
+  };
+
   const prMenu = (e: React.MouseEvent, pr: PullRequest) =>
     ui.menu(e, [
+      { label: 'Show pull request', onClick: () => selectPr(pr) },
       { label: `Checkout #${pr.number}`, onClick: () => checkoutPr(pr) },
-      { label: 'Show branch in graph', onClick: () => selectPr(pr) },
       'sep',
       { label: 'Open on GitHub', onClick: () => window.open(pr.url) },
       { label: 'Copy link', onClick: () => copy(pr.url) },
@@ -1310,6 +1329,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     ]);
 
   const closeFileView = useCallback(() => setFileView(null), []);
+  const closePr = useCallback(() => setOpenPr(null), []);
 
   // The older of the two compared commits (lower in the graph) is the "from" side.
   const compare = useMemo(() => {
@@ -1340,6 +1360,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       add('GitHub', 'Refresh pull requests', loadPrs);
       if (currentRef && !prFor(currentRef) && currentRef.name !== defaultBranch) add('GitHub', `Create pull request for ${currentRef.name}…`, () => openCreatePr(currentRef));
       for (const pr of prs) {
+        add('GitHub', `Show #${pr.number} ${pr.title}`, () => selectPr(pr));
         add('GitHub', `Checkout #${pr.number} ${pr.title}`, () => checkoutPr(pr));
         add('GitHub', `Open #${pr.number} on GitHub`, () => window.open(pr.url));
       }
@@ -1633,7 +1654,20 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
         </div>
         <Splitter onDrag={(dx) => setRightW((w) => clamp(w - dx, RIGHT_MIN, 720))} />
         <div className="right" style={{ width: rightShown }}>
-          {info && stagingVisible ? (
+          {openPr ? (
+            <PrPanel
+              repo={path}
+              number={openPr.number}
+              version={prsLoaded}
+              act={prAct}
+              onSelectSha={selectSha}
+              onCheckout={() => {
+                const pr = prs.find((p) => p.number === openPr.number);
+                if (pr) checkoutPr(pr);
+              }}
+              onClose={closePr}
+            />
+          ) : info && stagingVisible ? (
             <StagingPanel
               repo={path}
               status={status}

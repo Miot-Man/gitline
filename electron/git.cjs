@@ -68,19 +68,40 @@ function findGh() {
   return ghPath;
 }
 
+// Tests point GITLINE_GH at a fake gh written in JavaScript; it runs with this process's own Node
+// (Electron acts as Node with ELECTRON_RUN_AS_NODE), so it works the same on every OS.
+function ghCommand(args) {
+  const fake = process.env.GITLINE_GH;
+  if (fake) return { file: process.execPath, args: [fake, ...args], env: { ELECTRON_RUN_AS_NODE: '1' } };
+  return { file: findGh(), args, env: {} };
+}
+const ghEnv = (extra) => ({ ...ENV(), GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1', ...extra });
+const ghError = (err, stderr, stdout) =>
+  new Error(err.code === 'ENOENT' ? 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com.' : (stderr || stdout || err.message || 'gh failed').trim());
+
 function gh(cwd, args) {
+  const c = ghCommand(args);
   return new Promise((resolve, reject) => {
-    execFile(
-      findGh(),
-      args,
-      { cwd, env: { ...ENV(), GH_PROMPT_DISABLED: '1', NO_COLOR: '1', GH_NO_UPDATE_NOTIFIER: '1' }, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
-      (err, stdout, stderr) => {
-        if (err) {
-          const msg = err.code === 'ENOENT' ? 'The GitHub CLI (gh) is not installed. Install it from https://cli.github.com.' : (stderr || stdout || err.message).trim();
-          reject(new Error(msg));
-        } else resolve(stdout);
-      }
-    );
+    execFile(c.file, c.args, { cwd, env: ghEnv(c.env), maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) reject(ghError(err, stderr, stdout));
+      else resolve(stdout);
+    });
+  });
+}
+
+// Like gh(), but writes `input` to stdin: comment and description bodies go through `--body-file -`
+// rather than the command line.
+function ghInput(cwd, args, input) {
+  const c = ghCommand(args);
+  return new Promise((resolve, reject) => {
+    const p = spawn(c.file, c.args, { cwd, env: ghEnv(c.env), windowsHide: true });
+    let out = '';
+    let errOut = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (errOut += d));
+    p.on('error', (e) => reject(ghError(e, errOut, out)));
+    p.on('close', (code) => (code === 0 ? resolve(out) : reject(ghError({}, errOut, out))));
+    p.stdin.end(input);
   });
 }
 
@@ -150,6 +171,20 @@ function parseNameStatus(out) {
 }
 
 // Collapses a PR's check runs / commit statuses into one state.
+// One check's state, from a CheckRun's conclusion/status or a commit status's state.
+function checkState(s) {
+  if (['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(s)) return 'failure';
+  if (['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(s)) return 'success';
+  return 'pending';
+}
+
+// The signed-in GitHub user, looked up once it's known.
+let viewerLogin = null;
+async function ghViewer(cwd) {
+  if (!viewerLogin) viewerLogin = (await gh(cwd, ['api', 'user', '--jq', '.login']).catch(() => '')).trim() || null;
+  return viewerLogin;
+}
+
 function summarizeChecks(rollup) {
   if (!rollup.length) return null;
   const states = rollup.map((c) => (c.conclusion || c.state || c.status || '').toUpperCase());
@@ -837,6 +872,73 @@ const ops = {
   },
   async ghCheckoutPr(cwd, number) {
     await gh(cwd, ['pr', 'checkout', String(number)]);
+  },
+  // Everything the PR panel shows, from one `gh pr view`, plus who's signed in (to hide reviewing your own PR).
+  async ghPrDetails(cwd, number) {
+    const fields =
+      'number,title,body,state,isDraft,author,headRefName,headRefOid,baseRefName,url,createdAt,updatedAt,mergeable,mergeStateStatus,reviewDecision,reviewRequests,reviews,comments,statusCheckRollup,commits,additions,deletions,changedFiles,isCrossRepository';
+    const [out, viewer] = await Promise.all([gh(cwd, ['pr', 'view', String(number), '--json', fields]), ghViewer(cwd)]);
+    const p = JSON.parse(out);
+    const time = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) : 0);
+    const login = (a) => a?.login ?? 'ghost';
+    return {
+      number: p.number,
+      title: p.title,
+      body: p.body ?? '',
+      state: p.state === 'MERGED' ? 'merged' : p.state === 'CLOSED' ? 'closed' : p.isDraft ? 'draft' : 'open',
+      author: login(p.author),
+      head: p.headRefName,
+      sha: p.headRefOid,
+      base: p.baseRefName,
+      url: p.url,
+      created: time(p.createdAt),
+      updated: time(p.updatedAt),
+      mergeable: p.mergeable === 'MERGEABLE' ? true : p.mergeable === 'CONFLICTING' ? false : null,
+      mergeState: (p.mergeStateStatus || 'UNKNOWN').toLowerCase(),
+      review: p.reviewDecision || null,
+      requested: (p.reviewRequests ?? []).map((r) => r.login ?? r.name ?? r.slug).filter(Boolean),
+      reviews: (p.reviews ?? []).map((r) => ({ author: login(r.author), state: r.state, body: r.body ?? '', time: time(r.submittedAt) })),
+      comments: (p.comments ?? []).map((c) => ({ author: login(c.author), body: c.body ?? '', time: time(c.createdAt), url: c.url })),
+      checks: (p.statusCheckRollup ?? []).map((c) => ({
+        name: c.name ?? c.context ?? 'check',
+        workflow: c.workflowName ?? '',
+        state: checkState((c.conclusion || c.state || c.status || '').toUpperCase()),
+        url: c.detailsUrl ?? c.targetUrl ?? '',
+      })),
+      checksState: summarizeChecks(p.statusCheckRollup ?? []),
+      commits: (p.commits ?? []).length,
+      additions: p.additions ?? 0,
+      deletions: p.deletions ?? 0,
+      files: p.changedFiles ?? 0,
+      fork: !!p.isCrossRepository,
+      viewer,
+    };
+  },
+  async ghMergePr(cwd, number, method, deleteBranch) {
+    await gh(cwd, ['pr', 'merge', String(number), `--${method}`, ...(deleteBranch ? ['--delete-branch'] : [])]);
+  },
+  async ghClosePr(cwd, number) {
+    await gh(cwd, ['pr', 'close', String(number)]);
+  },
+  async ghReopenPr(cwd, number) {
+    await gh(cwd, ['pr', 'reopen', String(number)]);
+  },
+  async ghReadyPr(cwd, number, draft) {
+    await gh(cwd, ['pr', 'ready', String(number), ...(draft ? ['--undo'] : [])]);
+  },
+  async ghCommentPr(cwd, number, body) {
+    await ghInput(cwd, ['pr', 'comment', String(number), '--body-file', '-'], body);
+  },
+  // kind is approve, request-changes or comment; an approval's message is optional.
+  async ghReviewPr(cwd, number, kind, body) {
+    const args = ['pr', 'review', String(number), `--${kind}`];
+    if (body) await ghInput(cwd, [...args, '--body-file', '-'], body);
+    else await gh(cwd, args);
+  },
+  async ghEditPr(cwd, number, { title, body }) {
+    const args = ['pr', 'edit', String(number), ...(title !== undefined ? ['--title', title] : [])];
+    if (body !== undefined) await ghInput(cwd, [...args, '--body-file', '-'], body);
+    else await gh(cwd, args);
   },
   // Repositories the signed-in GitHub user can clone: their own, ones they collaborate on, and their orgs'.
   // Runs from the home folder because it doesn't belong to any repo.

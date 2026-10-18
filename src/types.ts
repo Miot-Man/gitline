@@ -142,6 +142,59 @@ export interface PullRequest {
   checks: 'success' | 'failure' | 'pending' | null;
 }
 
+export type PrState = 'open' | 'draft' | 'merged' | 'closed';
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+
+export interface PrCheck {
+  name: string;
+  workflow: string;
+  state: 'success' | 'failure' | 'pending';
+  url: string;
+}
+
+export interface PrReview {
+  author: string;
+  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'DISMISSED' | 'PENDING';
+  body: string;
+  time: number;
+}
+
+export interface PrComment {
+  author: string;
+  body: string;
+  time: number;
+  url: string;
+}
+
+// One pull request in full, for the PR panel.
+export interface PullRequestDetails {
+  number: number;
+  title: string;
+  body: string;
+  state: PrState;
+  author: string;
+  head: string;
+  sha: string;
+  base: string;
+  url: string;
+  created: number;
+  updated: number;
+  mergeable: boolean | null; // null while GitHub is still working it out
+  mergeState: string; // GitHub's mergeStateStatus, lowercased: clean, blocked, behind, dirty, unstable, draft…
+  review: PullRequest['review'];
+  requested: string[]; // reviewers asked who haven't reviewed yet
+  reviews: PrReview[];
+  comments: PrComment[];
+  checks: PrCheck[];
+  checksState: PullRequest['checks'];
+  commits: number;
+  additions: number;
+  deletions: number;
+  files: number;
+  fork: boolean;
+  viewer: string | null; // the signed-in GitHub user
+}
+
 export interface CiStatus {
   state: 'success' | 'failure' | 'pending';
   url: string;
