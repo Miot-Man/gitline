@@ -317,3 +317,86 @@ test('home lists recent repos, and clones from a URL into the remembered folder'
   await expect(page.locator('.toolbar')).toBeVisible();
   expect(fs.existsSync(path.join(root, 'copy', 'a.txt'))).toBe(true);
 });
+
+test('a pull request opens in the side panel, where you can comment, review and merge it', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', '1\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  gl.git('checkout', '-qb', 'feature/login');
+  gl.write('login.txt', 'form\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Add login page');
+  const sha = gl.git('rev-parse', 'HEAD');
+  gl.git('checkout', '-q', 'main');
+  gl.git('remote', 'add', 'origin', 'https://github.com/example/repo.git');
+  const pr = {
+    number: 7,
+    title: 'Add login',
+    headRefName: 'feature/login',
+    headRefOid: sha,
+    baseRefName: 'main',
+    author: { login: 'mate' },
+    url: 'https://github.com/example/repo/pull/7',
+    isDraft: false,
+    reviewDecision: 'REVIEW_REQUIRED',
+    statusCheckRollup: [{ __typename: 'CheckRun', name: 'Test (ubuntu)', workflowName: 'CI', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'https://ci/1' }],
+    isCrossRepository: false,
+  };
+  gl.setGh({
+    user: 'me',
+    prs: [pr],
+    pr: {
+      ...pr,
+      body: '## Why\nPeople asked for **login**.',
+      state: 'OPEN',
+      createdAt: '2026-10-01T10:00:00Z',
+      updatedAt: '2026-10-02T10:00:00Z',
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'CLEAN',
+      reviewRequests: [{ __typename: 'User', login: 'sam' }],
+      reviews: [{ author: { login: 'ana' }, state: 'APPROVED', body: 'Nice', submittedAt: '2026-10-01T12:00:00Z' }],
+      comments: [{ author: { login: 'sam' }, body: 'Will look tomorrow', createdAt: '2026-10-01T10:30:00Z', url: '' }],
+      commits: [{}],
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+    },
+  });
+  await gl.open();
+
+  await page.locator('.pr-item', { hasText: 'Add login' }).click();
+  const panel = page.locator('.pr-panel');
+  await expect(panel.locator('.pr-title')).toContainText('Add login');
+  await expect(panel.locator('.markdown h2')).toHaveText('Why');
+  await expect(panel.locator('.markdown strong')).toHaveText('login');
+  await expect(panel.locator('.pr-row', { hasText: 'Test (ubuntu)' })).toBeVisible();
+  await expect(panel.locator('.pr-row', { hasText: 'ana' })).toContainText('approved');
+  await expect(panel.locator('.pr-row', { hasText: 'sam' })).toContainText('awaiting review');
+  await expect(panel.locator('.pr-comment', { hasText: 'Will look tomorrow' })).toBeVisible();
+  // The PR's tip is selected in the graph.
+  await expect(row(page, 'Add login page')).toHaveClass(/selected/);
+  // Everything needed fits at the smallest window.
+  await expect(page.getByRole('button', { name: 'Merge options' })).toBeInViewport();
+  await expect(panel.locator('.pr-compose textarea')).toBeInViewport();
+
+  const called = (args: string[]) => expect.poll(() => gl.ghCalls().find((c) => c.args.join(' ') === args.join(' ')) ?? null);
+
+  await panel.locator('.pr-compose textarea').fill('Ship it');
+  await panel.getByRole('button', { name: 'Comment' }).click();
+  await called(['pr', 'comment', '7', '--body-file', '-']).toMatchObject({ stdin: 'Ship it' });
+  await expect(panel.locator('.pr-compose textarea')).toHaveValue('');
+
+  await panel.getByRole('button', { name: /^Review/ }).click();
+  await page.locator('.menu-item', { hasText: 'Approve' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Approve' }).click();
+  await called(['pr', 'review', '7', '--approve']).toBeTruthy();
+
+  await page.getByRole('button', { name: 'Merge options' }).click();
+  await page.locator('.menu-item', { hasText: 'Squash and merge' }).click();
+  await page.locator('.modal').getByRole('button', { name: 'Squash and merge' }).click();
+  await called(['pr', 'merge', '7', '--squash', '--delete-branch']).toBeTruthy();
+
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+});
