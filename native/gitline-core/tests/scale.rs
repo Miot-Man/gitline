@@ -51,4 +51,3 @@ fn loads_a_big_history_and_a_big_diff() {
     // Generous bounds: CI runners are slow and this crate is built without optimisations in tests.
     assert!(graph_ms < 3000 && view_ms < 20_000, "too slow");
 }
-

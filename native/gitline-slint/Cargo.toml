@@ -4,7 +4,6 @@ description = "Gitline spike: the history, staging and diff screens in Slint"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-rust-version.workspace = true
 
 [dependencies]
 gitline-core.workspace = true

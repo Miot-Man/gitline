@@ -1,12 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["gitline-core", "gitline-slint"]
+members = ["gitline-core", "gitline-slint", "gitline-iced"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 publish = false
-rust-version = "1.88"
 
 [workspace.dependencies]
 gitline-core = { path = "gitline-core" }

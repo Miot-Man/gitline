@@ -41,12 +41,26 @@ pub fn make_big_repo(repo: &Repo, commits: usize, big_lines: usize) {
                 tip = commit(&mut s, &name, Some(tip), None, &format!("Feature {feature}: step {}", k + 1), &[file]);
             }
             // Main moves on meanwhile, then merges the branch.
-            main = commit(&mut s, "main", Some(main), None, &format!("Commit {i} on main"), &[(format!("src/file_{}.rs", i % 50), format!("pub const N: u32 = {i};\n"))]);
+            main = commit(
+                &mut s,
+                "main",
+                Some(main),
+                None,
+                &format!("Commit {i} on main"),
+                &[(format!("src/file_{}.rs", i % 50), format!("pub const N: u32 = {i};\n"))],
+            );
             main = commit(&mut s, "main", Some(main), Some(tip), &format!("Merge branch '{name}'"), &[]);
             i += 5;
             continue;
         }
-        main = commit(&mut s, "main", Some(main), None, &format!("Commit {i}: tweak file {}", i % 50), &[(format!("src/file_{}.rs", i % 50), format!("pub const N: u32 = {i};\n"))]);
+        main = commit(
+            &mut s,
+            "main",
+            Some(main),
+            None,
+            &format!("Commit {i}: tweak file {}", i % 50),
+            &[(format!("src/file_{}.rs", i % 50), format!("pub const N: u32 = {i};\n"))],
+        );
         if i % 500 == 0 {
             s.push_str(&format!("reset refs/tags/v{}\nfrom :{main}\n\n", i / 500));
         }

@@ -51,7 +51,10 @@ fn assert_on_screen(app: &AppWindow, label: &str) {
     let e = find(app, label);
     let (p, s) = (e.absolute_position(), e.size());
     let w = app.window().size().to_logical(app.window().scale_factor());
-    assert!(p.x >= 0.0 && p.y >= 0.0 && p.x + s.width <= w.width + 0.5 && p.y + s.height <= w.height + 0.5, "{label} at {p:?} {s:?} is off a {w:?} window");
+    assert!(
+        p.x >= 0.0 && p.y >= 0.0 && p.x + s.width <= w.width + 0.5 && p.y + s.height <= w.height + 0.5,
+        "{label} at {p:?} {s:?} is off a {w:?} window"
+    );
     assert!(s.width > 0.0 && s.height > 0.0, "{label} has no size");
 }
 

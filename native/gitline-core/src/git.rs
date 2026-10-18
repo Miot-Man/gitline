@@ -141,9 +141,7 @@ impl Repo {
         }
         full.extend(args.iter().map(OsStr::new));
         let mut cmd = command(&self.path, &full, &self.env);
-        cmd.stdin(if opts.input.is_some() { Stdio::piped() } else { Stdio::null() })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.stdin(if opts.input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn()?;
         if let Some(input) = opts.input {
             // Write on another thread so a large patch can't deadlock against a full stdout pipe.
@@ -232,9 +230,9 @@ impl Repo {
             None
         };
         let merge_msg = match state {
-            Some(s) if s != RepoState::Rebase => std::fs::read_to_string(git_dir.join("MERGE_MSG")).ok().map(|m| {
-                m.split('\n').filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n").trim().to_string()
-            }),
+            Some(s) if s != RepoState::Rebase => std::fs::read_to_string(git_dir.join("MERGE_MSG"))
+                .ok()
+                .map(|m| m.split('\n').filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n").trim().to_string()),
             _ => None,
         };
         // FETCH_HEAD is rewritten on every fetch/pull, so its mtime is when the repo last talked to a remote.
@@ -295,15 +293,8 @@ impl Repo {
     }
 
     pub fn refs(&self) -> Result<Vec<Ref>> {
-        let fmt = [
-            "%(refname)",
-            "%(objectname)",
-            "%(*objectname)",
-            "%(upstream:short)",
-            "%(upstream:track,nobracket)",
-            "%(HEAD)",
-        ]
-        .join("%1f");
+        let fmt =
+            ["%(refname)", "%(objectname)", "%(*objectname)", "%(upstream:short)", "%(upstream:track,nobracket)", "%(HEAD)"].join("%1f");
         let r = self.git(&["for-each-ref", &format!("--format={fmt}"), "refs/heads", "refs/remotes", "refs/tags"])?;
         let opt = |s: &str| Some(s.to_string()).filter(|s| !s.is_empty());
         Ok(lines(&r.stdout)
@@ -449,11 +440,7 @@ impl Repo {
     }
 
     pub fn unstage_all(&self) -> Result<()> {
-        if self.has_head()? {
-            self.git(&["reset", "-q"]).map(drop)
-        } else {
-            self.git(&["rm", "--cached", "-r", "-q", "."]).map(drop)
-        }
+        if self.has_head()? { self.git(&["reset", "-q"]).map(drop) } else { self.git(&["rm", "--cached", "-r", "-q", "."]).map(drop) }
     }
 
     /// Applies a patch to the index (`cached`) or the work tree. `--recount`: line-level patches are
@@ -507,7 +494,11 @@ impl Repo {
     }
 
     pub fn revert(&self, sha: &str, is_merge: bool) -> Result<OpResult> {
-        if is_merge { self.conflict_aware(&["revert", "--no-edit", "-m", "1", sha]) } else { self.conflict_aware(&["revert", "--no-edit", sha]) }
+        if is_merge {
+            self.conflict_aware(&["revert", "--no-edit", "-m", "1", sha])
+        } else {
+            self.conflict_aware(&["revert", "--no-edit", sha])
+        }
     }
 
     /// `stash_ref` is e.g. `stash@{1}`.

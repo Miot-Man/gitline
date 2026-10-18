@@ -4,7 +4,6 @@ description = "Gitline's git layer and diff/graph logic, shared by the native fr
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-rust-version.workspace = true
 
 [dependencies]
 syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-onig"] }

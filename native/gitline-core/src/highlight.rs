@@ -51,8 +51,16 @@ const SCOPES: &[ScopeRule] = &[
     ("keyword, storage, constant.language, support.constant, variable.language", |p| p.keyword, false),
     ("keyword.operator, punctuation.accessor", |_| 0, false), // operators stay plain text, as in hljs
     ("entity.name.function, support.function, meta.function-call entity, markup.heading, entity.name.section", |p| p.func, false),
-    ("entity.name.type, entity.name.class, entity.name.struct, entity.name.enum, entity.name.trait, entity.name.interface, support.type, support.class, entity.other.inherited-class, storage.type.primitive", |p| p.kind, false),
-    ("entity.other.attribute-name, entity.name.tag, support.type.property-name, variable.other.member, meta.mapping.key string, entity.name.label", |p| p.attr, false),
+    (
+        "entity.name.type, entity.name.class, entity.name.struct, entity.name.enum, entity.name.trait, entity.name.interface, support.type, support.class, entity.other.inherited-class, storage.type.primitive",
+        |p| p.kind,
+        false,
+    ),
+    (
+        "entity.other.attribute-name, entity.name.tag, support.type.property-name, variable.other.member, meta.mapping.key string, entity.name.label",
+        |p| p.attr,
+        false,
+    ),
 ];
 
 fn rgb(c: u32) -> Color {
@@ -89,7 +97,8 @@ pub struct Highlighter {
 }
 
 /// Built-in guesses the syntax set doesn't make on its own (from src/lib/highlight.ts).
-const BY_EXT: &[(&str, &str)] = &[("ino", "cpp"), ("pde", "cpp"), ("mts", "ts"), ("cts", "ts"), ("cjs", "js"), ("mjs", "js"), ("jsonc", "json")];
+const BY_EXT: &[(&str, &str)] =
+    &[("ino", "cpp"), ("pde", "cpp"), ("mts", "ts"), ("cts", "ts"), ("cjs", "js"), ("mjs", "js"), ("jsonc", "json")];
 
 impl Highlighter {
     /// The shared highlighter. Loading the syntax set takes a moment, so it's done once.
@@ -193,7 +202,15 @@ mod tests {
     #[test]
     fn carries_a_python_docstring_across_lines() {
         let h = Highlighter::global();
-        let lines = ["#!/usr/bin/env python3", r#""""Fit the simulated motors."#, "", "Reads the log and writes from the model.", r#"""""#, "", "import math"];
+        let lines = [
+            "#!/usr/bin/env python3",
+            r#""""Fit the simulated motors."#,
+            "",
+            "Reads the log and writes from the model.",
+            r#"""""#,
+            "",
+            "import math",
+        ];
         let out = h.highlight_lines(&lines, "fit.py", ThemeKind::Dark);
         assert_eq!(out.len(), lines.len());
         // The prose inside the docstring is coloured like its opening line, not as keywords. (bat's

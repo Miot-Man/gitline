@@ -264,9 +264,6 @@ mod tests {
     fn carries_no_newline_markers() {
         let d = parse_diff("--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n");
         let patch = build_line_patch(&d.header, &d.hunks[0], &HashSet::from([2]), false);
-        assert_eq!(
-            patch,
-            "--- a/f\n+++ b/f\n@@ -1 +1 @@\n a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n"
-        );
+        assert_eq!(patch, "--- a/f\n+++ b/f\n@@ -1 +1 @@\n a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n");
     }
 }

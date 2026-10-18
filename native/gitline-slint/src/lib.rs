@@ -80,11 +80,7 @@ impl Controller {
         app.set_selected_commit(s.selected as i32);
         let st = &s.status;
         let mut counts = Vec::new();
-        for (n, word) in [
-            (st.staged.len(), "staged"),
-            (st.unstaged.len(), "unstaged"),
-            (st.conflicted.len(), "conflicted"),
-        ] {
+        for (n, word) in [(st.staged.len(), "staged"), (st.unstaged.len(), "unstaged"), (st.conflicted.len(), "conflicted")] {
             if n > 0 {
                 counts.push(format!("{n} {word}"));
             }

@@ -133,8 +133,7 @@ fn intern<'a>(s: &'a str, ids: &mut HashMap<&'a str, u32>) -> u32 {
     *ids.entry(s).or_insert(n)
 }
 
-pub const LANE_COLORS: [u32; 10] =
-    [0x2ec4b6, 0xf4a259, 0xa594f9, 0x4f8cff, 0xe86a92, 0x7bd389, 0xe3c35a, 0x5bc0eb, 0xff8c61, 0xc792ea];
+pub const LANE_COLORS: [u32; 10] = [0x2ec4b6, 0xf4a259, 0xa594f9, 0x4f8cff, 0xe86a92, 0x7bd389, 0xe3c35a, 0x5bc0eb, 0xff8c61, 0xc792ea];
 
 /// Color 0 is reserved for the first line drawn so side branches never blend into it. Returns 0xRRGGBB.
 pub fn lane_color(i: usize) -> u32 {

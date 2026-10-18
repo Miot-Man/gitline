@@ -114,7 +114,8 @@ impl DiffView {
                     }
                 }
             }
-            let words: HashMap<usize, Vec<(usize, usize)>> = pair_word_diffs(lines).into_iter().map(|(i, s)| (i, changed_ranges(&s))).collect();
+            let words: HashMap<usize, Vec<(usize, usize)>> =
+                pair_word_diffs(lines).into_iter().map(|(i, s)| (i, changed_ranges(&s))).collect();
             for (i, l) in lines.iter().enumerate() {
                 let kind = match l.kind {
                     LineKind::Add => RowKind::Add,
@@ -249,7 +250,9 @@ pub fn graph_cell(row: &GraphRow, parents: usize, is_head: bool, is_wip: bool) -
         match *lane {
             None | Some(RESERVED) => {}
             // A lane merging in keeps its own color.
-            Some(id) if id == row.id => lines.push(GraphLine { points: metro(lane_x(k), 0.0, lane_x(col), mid, false), color: in_color(k), dashed: false }),
+            Some(id) if id == row.id => {
+                lines.push(GraphLine { points: metro(lane_x(k), 0.0, lane_x(col), mid, false), color: in_color(k), dashed: false })
+            }
             Some(id) if row.after.get(k) == Some(&Some(id)) => {
                 lines.push(GraphLine { points: vec![(lane_x(k), 0.0), (lane_x(k), ROW_H)], color: in_color(k), dashed: false })
             }
@@ -330,7 +333,8 @@ impl History {
                 },
             );
         }
-        let pairs: Vec<(&str, Vec<&str>)> = commits.iter().map(|c| (c.sha.as_str(), c.parents.iter().map(String::as_str).collect())).collect();
+        let pairs: Vec<(&str, Vec<&str>)> =
+            commits.iter().map(|c| (c.sha.as_str(), c.parents.iter().map(String::as_str).collect())).collect();
         let graph = crate::graph::compute_graph(&pairs, trunk);
         let mut refs_by_sha: HashMap<String, Vec<Ref>> = HashMap::new();
         for r in refs {
@@ -355,7 +359,8 @@ impl History {
 mod tests {
     use super::*;
 
-    const DIFF: &str = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let x = 1;\n+    let x = 10;\n }\n";
+    const DIFF: &str =
+        "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let x = 1;\n+    let x = 10;\n }\n";
 
     #[test]
     fn flattens_hunks_into_rows() {

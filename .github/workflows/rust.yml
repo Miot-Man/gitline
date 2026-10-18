@@ -1,0 +1,41 @@
+name: Rust (native spike)
+
+on:
+  push:
+    branches: [main]
+    paths: ['native/**', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['native/**', '.github/workflows/rust.yml']
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: native
+    env:
+      CARGO_TERM_COLOR: always
+      # The UI tests render headless; use the software renderer everywhere.
+      ICED_TEST_BACKEND: tiny-skia
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Install Linux libraries for the GUI toolkits
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+      - run: cargo build --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
