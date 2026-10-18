@@ -27,10 +27,13 @@ export interface Stash {
   index: number;
 }
 
+export type ConflictKind = 'both-modified' | 'both-added' | 'deleted-by-us' | 'deleted-by-them' | 'added-by-us' | 'added-by-them' | 'both-deleted';
+
 export interface FileChange {
   path: string;
   oldPath?: string;
   status: string; // M A D R C U ? T
+  conflict?: ConflictKind; // set on conflicted files (status 'U')
 }
 
 export interface Status {
@@ -41,11 +44,19 @@ export interface Status {
 
 export type RepoState = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null;
 
+export interface OpCommit {
+  sha: string;
+  subject: string;
+  name: string | null; // a branch or tag pointing at it
+}
+
 export interface RepoInfo {
   head: string | null;
   branch: string | null;
   state: RepoState;
   mergeMsg: string | null;
+  opCommit: OpCommit | null; // the commit being merged, replayed, picked or reverted (git's "theirs")
+  onto: OpCommit | null; // rebase: the commit being rebased onto (git's "ours")
   remotes: string[];
   fetchedAt: number | null; // ms since epoch of the last fetch/pull, if any
   bisecting: boolean;
@@ -83,6 +94,13 @@ export interface CommitDetails {
   commitTime: number;
   message: string;
   files: FileChange[];
+}
+
+export type FileEncoding = 'utf-8' | 'utf-8-bom' | 'latin1';
+
+export interface ConflictFile {
+  text: string | null; // null when the file isn't in the working tree
+  encoding: FileEncoding;
 }
 
 export interface OpResult {

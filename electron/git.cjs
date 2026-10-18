@@ -150,6 +150,53 @@ const exists = (...p) => fs.existsSync(path.join(...p));
 const shellQuote = (s) => `'${s.replace(/\\/g, '/').replace(/'/g, `'\\''`)}'`;
 const lines = (s) => s.split('\n').filter(Boolean);
 
+// What git's two-letter code for an unmerged file means.
+const CONFLICT_KINDS = {
+  UU: 'both-modified',
+  AA: 'both-added',
+  UD: 'deleted-by-them',
+  DU: 'deleted-by-us',
+  AU: 'added-by-us',
+  UA: 'added-by-them',
+  DD: 'both-deleted',
+};
+
+// The commit an in-progress operation is applying, and for a rebase the commit it replays onto.
+// `name` is a branch or tag for the commit when there is one.
+async function opCommits(cwd, gd, state, mergeMsg) {
+  const firstLine = (...p) => {
+    try {
+      return fs.readFileSync(path.join(gd, ...p), 'utf8').split('\n')[0].trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const describe = async (rev, name) => {
+    if (!rev) return null;
+    const r = await git(cwd, ['log', '-1', '--format=%H%x1f%s', `${rev}^{commit}`, '--'], { allowFail: true });
+    if (r.code !== 0 || !r.stdout.trim()) return null;
+    const [sha, subject] = r.stdout.trim().split(SEP);
+    if (!name) {
+      const refs = await git(cwd, ['for-each-ref', '--points-at', sha, '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/tags'], { allowFail: true });
+      name = lines(refs.stdout).find((n) => !n.endsWith('/HEAD')) ?? null;
+    }
+    return { sha, subject, name };
+  };
+  if (state === 'rebase') {
+    const applying = firstLine('rebase-merge', 'stopped-sha') ?? firstLine('REBASE_HEAD') ?? firstLine('rebase-apply', 'original-commit');
+    const onto = firstLine('rebase-merge', 'onto') ?? firstLine('rebase-apply', 'onto');
+    const [commit, ontoCommit] = await Promise.all([describe(applying, null), describe(onto, null)]);
+    // The commit being replayed is the user's own; a branch name for it would only be misleading.
+    if (commit) commit.name = null;
+    return { commit, onto: ontoCommit };
+  }
+  const head = { merge: 'MERGE_HEAD', 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD' }[state];
+  if (!head) return { commit: null, onto: null };
+  // "Merge branch 'feature'", "Merge remote-tracking branch 'origin/main'", "Merge branch 'main' of <url>".
+  const merged = state === 'merge' ? (mergeMsg ?? '').match(/^Merge (?:remote-tracking )?(?:branch|tag|commit) '([^']+)'/)?.[1] ?? null : null;
+  return { commit: await describe(firstLine(head), merged), onto: null };
+}
+
 async function hasHead(cwd) {
   return (await git(cwd, ['rev-parse', '--verify', '-q', 'HEAD'], { allowFail: true })).code === 0;
 }
@@ -228,11 +275,14 @@ const ops = {
     try {
       fetchedAt = fs.statSync(path.join(gd, 'FETCH_HEAD')).mtimeMs;
     } catch {}
+    const { commit: opCommit, onto } = await opCommits(cwd, gd, state, mergeMsg);
     return {
       head: head.stdout.trim() || null,
       branch: branch.stdout.trim() || null,
       state,
       mergeMsg,
+      opCommit,
+      onto,
       remotes: lines(remotes.stdout),
       fetchedAt,
       bisecting,
@@ -326,8 +376,8 @@ const ops = {
         unstaged.push({ path: p, status: '?' });
         continue;
       }
-      if (['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(xy)) {
-        conflicted.push({ path: p, status: 'U' });
+      if (CONFLICT_KINDS[xy]) {
+        conflicted.push({ path: p, status: 'U', conflict: CONFLICT_KINDS[xy] });
         continue;
       }
       if (x !== ' ') staged.push({ path: p, oldPath, status: x });
@@ -579,8 +629,15 @@ const ops = {
     return conflictAware(cwd, ['rebase', '--skip']);
   },
   async resolve(cwd, file, side) {
+    // A side that deleted the file has no version to check out: taking that side deletes the file.
+    const stages = lines((await git(cwd, ['ls-files', '-u', '--', file])).stdout).map((l) => l.split('\t')[0].split(' ')[2]);
+    if (!stages.includes(side === 'ours' ? '2' : '3')) return ops.resolveDelete(cwd, file);
     await git(cwd, ['checkout', `--${side}`, '--', file]);
     await git(cwd, ['add', '--', file]);
+  },
+  // Resolves a conflict by deleting the file (the way to settle most deletion conflicts).
+  async resolveDelete(cwd, file) {
+    await git(cwd, ['rm', '-q', '--', file]);
   },
 
   // ---- undo / redo primitives ----
@@ -737,6 +794,29 @@ const ops = {
   },
   async writeFile(cwd, file, content) {
     fs.writeFileSync(repoFile(cwd, file), content);
+  },
+  // A conflicted file as text, with the encoding to write it back in. Bytes that aren't valid UTF-8 are
+  // read as Latin-1 (one character per byte), so lines nobody edits are written back byte for byte.
+  // `text` is null when the file isn't in the working tree (it was deleted).
+  async readConflictFile(cwd, file) {
+    const full = repoFile(cwd, file);
+    if (!fs.existsSync(full)) return { text: null, encoding: 'utf-8' };
+    const buf = fs.readFileSync(full);
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf);
+      return text.startsWith('\uFEFF') ? { text: text.slice(1), encoding: 'utf-8-bom' } : { text, encoding: 'utf-8' };
+    } catch {
+      return { text: buf.toString('latin1'), encoding: 'latin1' };
+    }
+  },
+  async writeConflictFile(cwd, file, text, encoding) {
+    const full = repoFile(cwd, file);
+    if (encoding === 'latin1') {
+      const bad = [...new Set([...text].filter((c) => c.codePointAt(0) > 0xff))];
+      if (bad.length)
+        throw new Error(`${file} is saved as Latin-1, which can't hold ${bad.slice(0, 5).map((c) => `"${c}"`).join(', ')}. Remove ${bad.length === 1 ? 'that character' : 'those characters'} and save again.`);
+      fs.writeFileSync(full, Buffer.from(text, 'latin1'));
+    } else fs.writeFileSync(full, Buffer.from((encoding === 'utf-8-bom' ? '\uFEFF' : '') + text, 'utf8'));
   },
 
   // ---- config / identity ----

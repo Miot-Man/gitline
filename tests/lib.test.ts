@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildLinePatch, parseDiff } from '../src/lib/diff';
 import { computeGraph } from '../src/lib/graph';
-import { hasMarkers, parseConflicts, resolved } from '../src/lib/conflicts';
+import { conflictLayout, conflictSides, hasMarkers, kindLabel, parseConflicts, resolved } from '../src/lib/conflicts';
 import { cleanTemplate } from '../src/lib/settings';
 import { branchCreated, checkoutMove, headMove, refsDeleted, sameHead } from '../src/lib/undo';
 import { parseTrack } from '../src/lib/format';
@@ -82,6 +82,75 @@ describe('conflicts', () => {
   });
   it('treats an unterminated marker as text', () => {
     expect(parseConflicts('a\n<<<<<<< HEAD\nb\n')).toEqual([{ kind: 'text', text: 'a\n<<<<<<< HEAD\nb\n' }]);
+  });
+  it('parses zdiff3 output, where shared lines sit outside the block and the base can be empty', () => {
+    const z = 'a\nshared\n<<<<<<< HEAD\nY\n||||||| cf87fdb\nb\n=======\nX\n>>>>>>> x\nc\n<<<<<<< HEAD\nadded here\n||||||| cf87fdb\n=======\nadded there\n>>>>>>> x\n';
+    const segs = parseConflicts(z);
+    expect(segs.map((s) => s.kind)).toEqual(['text', 'conflict', 'text', 'conflict']);
+    expect(segs[0]).toEqual({ kind: 'text', text: 'a\nshared\n' });
+    expect(segs[1]).toMatchObject({ ours: 'Y\n', base: 'b\n', theirs: 'X\n' });
+    expect(segs[3]).toMatchObject({ ours: 'added here\n', base: '', theirs: 'added there\n' });
+  });
+  it('keeps a line of exactly ======= outside a conflict as text', () => {
+    const md = 'Title\n=======\n\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\nmore\n========\n';
+    const segs = parseConflicts(md);
+    expect(segs).toEqual([
+      { kind: 'text', text: 'Title\n=======\n\n' },
+      { kind: 'conflict', ours: 'ours\n', theirs: 'theirs\n', base: null, oursLabel: 'HEAD', theirsLabel: 'x' },
+      { kind: 'text', text: 'more\n========\n' },
+    ]);
+    const c = segs[1] as Extract<(typeof segs)[number], { kind: 'conflict' }>;
+    const result = 'Title\n=======\n\n' + resolved(c, 'theirs') + 'more\n========\n';
+    expect(hasMarkers(result)).toBe(false);
+    expect(hasMarkers(result + '>>>>>>> x\n')).toBe(true);
+  });
+  it('reads markers with Windows line endings', () => {
+    const segs = parseConflicts('<<<<<<< HEAD\r\na\r\n=======\r\nb\r\n>>>>>>> x\r\n');
+    expect(segs).toEqual([{ kind: 'conflict', ours: 'a\r\n', theirs: 'b\r\n', base: null, oursLabel: 'HEAD', theirsLabel: 'x' }]);
+  });
+});
+
+describe('conflictLayout', () => {
+  const file = '1\n2\n3\n4\n<<<<<<< HEAD\na\nb\n=======\nc\n>>>>>>> x\n5\n6\n<<<<<<< HEAD\nd\n=======\ne\nf\n>>>>>>> x\n7\n';
+  const segs = parseConflicts(file);
+  it('takes up to three unchanged lines around each conflict', () => {
+    const l = conflictLayout(segs, {});
+    expect(l[1].before).toEqual([2, 3, 4].map((n) => ({ no: n, text: String(n) })));
+    expect(l[1].after.map((x) => x.text)).toEqual(['5', '6']);
+    expect(l[3].before.map((x) => x.text)).toEqual(['5', '6']);
+    expect(l[3].after).toEqual([{ no: 19, text: '7' }]);
+  });
+  it('numbers lines as they land in the result', () => {
+    // Undecided: the markers are still in the result.
+    expect(conflictLayout(segs, {})[1]).toMatchObject({ start: 5, ours: 6, theirs: 9 });
+    const l = conflictLayout(segs, { 1: 'both-reverse', 3: 'ours' });
+    expect(l[1]).toMatchObject({ start: 5, ours: 6, theirs: 5 });
+    expect(l[1].after[0]).toEqual({ no: 8, text: '5' });
+    expect(l[3]).toMatchObject({ start: 10, ours: 10, theirs: null });
+    expect(l[3].after).toEqual([{ no: 11, text: '7' }]);
+    const out = segs.map((s, i) => (s.kind === 'text' ? s.text : resolved(s, ({ 1: 'both-reverse', 3: 'ours' } as const)[i]))).join('');
+    expect(out.split('\n')[10]).toBe('7');
+  });
+});
+
+describe('conflict sides', () => {
+  const base = { branch: 'main', opCommit: { sha: '119f9c7aaaa', subject: 'my change', name: null }, onto: { sha: 'abcdef1234', subject: 'up', name: 'origin/main' } };
+  it('names the sides by what they are', () => {
+    const rebase = conflictSides({ ...base, state: 'rebase' });
+    expect([rebase.ours.label, rebase.theirs.label]).toEqual(['Upstream', 'Your commit']);
+    expect(rebase.ours.title).toBe('Upstream (origin/main)');
+    expect(rebase.theirs.title).toBe('Your commit (119f9c7 my change)');
+    const merge = conflictSides({ ...base, state: 'merge', opCommit: { ...base.opCommit, name: 'feature' }, onto: null });
+    expect([merge.ours.title, merge.theirs.title]).toEqual(['Current branch (main)', 'Incoming (feature)']);
+    expect(conflictSides({ ...base, state: 'cherry-pick' }).theirs.label).toBe('Picked commit');
+    expect(conflictSides({ ...base, state: null }, 'stash@{0}').theirs.title).toBe('Stash (stash@{0})');
+    expect(conflictSides(null).ours.label).toBe('Ours');
+  });
+  it('describes deletion conflicts in those terms', () => {
+    const rebase = conflictSides({ ...base, state: 'rebase' });
+    expect(kindLabel('deleted-by-them', rebase)).toBe('deleted by your commit');
+    expect(kindLabel('deleted-by-us', rebase)).toBe('deleted by upstream');
+    expect(kindLabel('both-deleted', rebase)).toBe('deleted by both');
   });
 });
 

@@ -96,12 +96,232 @@ test('resolve a merge conflict in the conflict editor', async ({ gl }) => {
 
   // Click the name: the conflicted row also has its own Ours/Theirs buttons.
   await page.locator('.file-row', { hasText: 'config.txt' }).locator('.file-name').click();
-  await page.locator('.conflict-card .seg button', { hasText: /^Theirs$/ }).click();
+  await page.locator('.conflict-card .seg button', { hasText: /^Incoming$/ }).click();
   await page.getByRole('button', { name: 'Save & Mark Resolved' }).click();
   await expect(page.locator('.btn-commit')).toHaveText('Commit merge');
   await page.locator('.btn-commit').click();
   await expect.poll(() => gl.git('log', '-1', '--format=%p').split(' ').length).toBe(2);
   expect(gl.read('config.txt')).toBe('speed = 120\n');
+});
+
+test('a rebase conflict names your commit and upstream, and keeps your change', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('config.txt', 'speed = 100\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'mine');
+  gl.write('config.txt', 'speed = 120\n');
+  gl.git('commit', '-qam', 'My change');
+  gl.git('checkout', '-q', 'main');
+  gl.write('config.txt', 'speed = 80\n');
+  gl.git('commit', '-qam', 'Upstream change');
+  gl.git('checkout', '-q', 'mine');
+  try {
+    gl.git('rebase', 'main');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  const conflicted = page.locator('.file-row', { hasText: 'config.txt' });
+  await expect(conflicted.locator('.file-kind')).toHaveText('both modified');
+  await conflicted.hover();
+  await expect(conflicted.getByRole('button', { name: 'Upstream' })).toHaveAttribute('title', /Upstream \(main\)/);
+  await expect(conflicted.getByRole('button', { name: 'Your commit' })).toHaveAttribute('title', /My change/);
+  await expect(page.locator('.state-banner')).toContainText('Applying your commit');
+
+  // Taking upstream for the whole file asks first, since it drops your change.
+  await conflicted.getByRole('button', { name: 'Upstream' }).click();
+  await expect(page.locator('.modal')).toContainText("This drops your commit's changes to config.txt.");
+  await page.getByRole('button', { name: 'Cancel' }).click();
+
+  await conflicted.locator('.file-name').click();
+  await expect(page.locator('.conflict-side.ours .conflict-label')).toHaveText('Upstream');
+  await expect(page.locator('.conflict-side.theirs .conflict-label')).toHaveText('Your commit');
+  await page.locator('.conflict-card .seg button', { hasText: /^Your commit$/ }).click();
+  await page.getByRole('button', { name: 'Save & Mark Resolved' }).click();
+  await page.locator('.state-banner').getByRole('button', { name: 'Continue' }).click();
+  await expect(page.locator('.state-banner')).toHaveCount(0);
+  expect(gl.read('config.txt')).toBe('speed = 120\n');
+  expect(gl.git('log', '--format=%s').split('\n')).toEqual(['My change', 'Upstream change', 'Base']);
+});
+
+test('a modify/delete conflict is resolved by deleting the file', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('keep.txt', 'keep\n');
+  gl.write('old.txt', 'old\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'cleanup');
+  gl.git('rm', '-q', 'old.txt');
+  gl.git('commit', '-qm', 'Remove old');
+  gl.git('checkout', '-q', 'main');
+  gl.write('old.txt', 'old, edited\n');
+  gl.git('commit', '-qam', 'Edit old');
+  try {
+    gl.git('merge', 'cleanup');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  const conflicted = page.locator('.file-row', { hasText: 'old.txt' });
+  await expect(conflicted.locator('.file-kind')).toHaveText('deleted by incoming');
+  await conflicted.locator('.file-name').click();
+  await expect(page.locator('.conflict-side.ours')).toContainText('Changed the file');
+  await expect(page.locator('.conflict-side.theirs')).toContainText('Deleted the file');
+  await expect(page.locator('.conflict-surviving')).toHaveText('old, edited\n');
+  await page.locator('.conflict-editor').getByRole('button', { name: 'Delete file' }).click();
+  await expect(page.locator('.btn-commit')).toHaveText('Commit merge');
+  await page.locator('.btn-commit').click();
+  await expect.poll(() => gl.git('log', '-1', '--format=%p').split(' ').length).toBe(2);
+  expect(gl.git('ls-files')).toBe('keep.txt');
+});
+
+test('a conflicting stash pop gets a banner and ends with its changes unstaged', async ({ gl }) => {
+  const { page } = gl;
+  gl.write('config.txt', 'speed = 100\n');
+  gl.write('notes.txt', 'notes\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.write('config.txt', 'speed = 120\n');
+  gl.write('notes.txt', 'more notes\n');
+  gl.git('stash', '-q');
+  gl.write('config.txt', 'speed = 80\n');
+  gl.git('commit', '-qam', 'Slow');
+  await gl.open();
+
+  // The palette only lists stashes once they have loaded (slower on Windows).
+  await expect(page.locator('.sidebar', { hasText: 'WIP on main' })).toBeVisible();
+  await gl.menu('palette');
+  await page.locator('.palette input').fill('pop stash@{0}');
+  await expect(page.locator('.palette-item.active')).toContainText('Pop stash@{0}');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.state-banner')).toContainText('Popping stash@{0} hit conflicts');
+  const conflicted = page.locator('.file-row', { hasText: 'config.txt' });
+  await conflicted.hover();
+  await conflicted.getByRole('button', { name: 'Stash' }).click();
+  await expect(page.locator('.state-banner')).toHaveCount(0);
+  await expect.poll(() => gl.git('status', '--porcelain')).toBe('M config.txt\n M notes.txt');
+  expect(gl.read('config.txt')).toBe('speed = 120\n');
+  // Newer git fails `stash list` once the last stash is gone, so ask for the ref instead.
+  const hasStash = () => gl.git('for-each-ref', 'refs/stash') !== '';
+  expect(hasStash()).toBe(true);
+  await page.locator('.toast').getByRole('button', { name: 'Drop the stash' }).click();
+  await expect.poll(hasStash).toBe(false);
+});
+
+test('with diff3 markers the conflict card shows the original version', async ({ gl }) => {
+  const { page } = gl;
+  gl.git('config', 'merge.conflictStyle', 'diff3');
+  gl.write('config.txt', 'speed = 100\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'tuning');
+  gl.write('config.txt', 'speed = 120\n');
+  gl.git('commit', '-qam', 'Tune');
+  gl.git('checkout', '-q', 'main');
+  gl.write('config.txt', 'speed = 80\n');
+  gl.git('commit', '-qam', 'Slow');
+  try {
+    gl.git('merge', 'tuning');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  await page.locator('.file-row', { hasText: 'config.txt' }).locator('.file-name').click();
+  const original = page.locator('.conflict-base');
+  await expect(original.locator('.conflict-label')).toHaveText('Original');
+  await expect(original.locator('.conflict-code')).toHaveText('speed = 100');
+  await original.locator('.conflict-label').click();
+  await expect(original.locator('.conflict-code')).toHaveCount(0);
+  await page.locator('.conflict-card .seg button', { hasText: /^Current branch$/ }).click();
+  await expect(page.locator('.conflict-result textarea')).toHaveValue('speed = 80\n');
+});
+
+test('conflict cards show context, line numbers, syntax and changed words, and step between conflicts', async ({ gl }) => {
+  const { page } = gl;
+  const lines = (speed: string, turn: string) =>
+    ['#include <stdio.h>', '', 'int a = 1;', 'int b = 2;', 'int c = 3;', `int speed = ${speed};`, 'int d = 4;', 'int e = 5;', 'int f = 6;', 'int g = 7;', `int turn = ${turn};`, 'int h = 8;', ''].join('\n');
+  gl.write('main.c', lines('100', '30'));
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'tuning');
+  gl.write('main.c', lines('120', '35'));
+  gl.git('commit', '-qam', 'Tune');
+  gl.git('checkout', '-q', 'main');
+  gl.write('main.c', lines('80', '25'));
+  gl.git('commit', '-qam', 'Slow');
+  try {
+    gl.git('merge', 'tuning');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  await page.locator('.file-row', { hasText: 'main.c' }).locator('.file-name').click();
+  const cards = page.locator('.conflict-card');
+  await expect(cards).toHaveCount(2);
+  const first = cards.nth(0);
+  // Three unchanged lines above and below, numbered as in the file.
+  await expect(first.locator('.conflict-code.before .cl')).toHaveCount(3);
+  await expect(first.locator('.conflict-code.before .cl').first()).toHaveText('3int a = 1;');
+  await expect(first.locator('.conflict-code.after .cl').first()).toHaveText('11int d = 4;');
+  // Undecided, the result still holds the markers: ours is line 7, theirs line 9.
+  await expect(first.locator('.conflict-code.ours .cl-no')).toHaveText('7');
+  await expect(first.locator('.conflict-code.theirs .cl-no')).toHaveText('9');
+  await expect(first.locator('.conflict-code.ours .hljs-type, .conflict-code.ours .hljs-keyword').first()).toBeVisible();
+  await expect(first.locator('.conflict-code.ours .wd')).toHaveText('80');
+  await expect(first.locator('.conflict-code.theirs .wd')).toHaveText('120');
+
+  // Choosing a side renumbers what follows.
+  await first.locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect(first.locator('.conflict-code.theirs .cl-no')).toHaveText('6');
+  await expect(first.locator('.conflict-code.after .cl').first()).toHaveText('7int d = 4;');
+
+  // Next / previous move the current card.
+  await expect(first).toHaveClass(/current/);
+  await page.getByRole('button', { name: 'Next conflict' }).click();
+  await expect(cards.nth(1)).toHaveClass(/current/);
+  await expect(cards.nth(1)).toBeInViewport();
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(first).toHaveClass(/current/);
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(cards.nth(1)).toHaveClass(/current/);
+  // Still in the conflict editor: Alt+arrows don't step to another file.
+  await expect(page.locator('.conflict-editor')).toBeVisible();
+
+  await cards.nth(1).locator('.seg button', { hasText: /^Current branch$/ }).click();
+  await expect(page.locator('.conflict-result textarea')).toHaveValue(lines('120', '25'));
+});
+
+test('choosing a side scrolls the result to that conflict', async ({ gl }) => {
+  const { page } = gl;
+  const file = (top: string, bottom: string) => [top, ...Array.from({ length: 80 }, (_, i) => `line ${i}`), bottom, ''].join('\n');
+  gl.write('long.txt', file('top', 'bottom'));
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.git('checkout', '-qb', 'other');
+  gl.write('long.txt', file('top theirs', 'bottom theirs'));
+  gl.git('commit', '-qam', 'Theirs');
+  gl.git('checkout', '-q', 'main');
+  gl.write('long.txt', file('top ours', 'bottom ours'));
+  gl.git('commit', '-qam', 'Ours');
+  try {
+    gl.git('merge', 'other');
+  } catch {
+    // expected: conflict
+  }
+  await gl.open();
+
+  await page.locator('.file-row', { hasText: 'long.txt' }).locator('.file-name').click();
+  const result = page.locator('.conflict-result textarea');
+  const scrollTop = () => result.evaluate((el) => el.scrollTop);
+  await page.locator('.conflict-card').nth(1).locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect.poll(scrollTop).toBeGreaterThan(1000);
+  await page.locator('.conflict-card').nth(0).locator('.seg button', { hasText: /^Incoming$/ }).click();
+  await expect.poll(scrollTop).toBe(0);
 });
 
 test('interactive rebase fixes up a commit', async ({ gl }) => {
