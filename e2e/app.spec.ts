@@ -191,8 +191,11 @@ test('a conflicting stash pop gets a banner and ends with its changes unstaged',
   gl.git('commit', '-qam', 'Slow');
   await gl.open();
 
+  // The palette only lists stashes once they have loaded (slower on Windows).
+  await expect(page.locator('.sidebar', { hasText: 'WIP on main' })).toBeVisible();
   await gl.menu('palette');
   await page.locator('.palette input').fill('pop stash@{0}');
+  await expect(page.locator('.palette-item.active')).toContainText('Pop stash@{0}');
   await page.keyboard.press('Enter');
   await expect(page.locator('.state-banner')).toContainText('Popping stash@{0} hit conflicts');
   const conflicted = page.locator('.file-row', { hasText: 'config.txt' });
