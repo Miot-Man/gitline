@@ -201,9 +201,11 @@ test('a conflicting stash pop gets a banner and ends with its changes unstaged',
   await expect(page.locator('.state-banner')).toHaveCount(0);
   await expect.poll(() => gl.git('status', '--porcelain')).toBe('M config.txt\n M notes.txt');
   expect(gl.read('config.txt')).toBe('speed = 120\n');
-  expect(gl.git('stash', 'list')).not.toBe('');
+  // Newer git fails `stash list` once the last stash is gone, so ask for the ref instead.
+  const hasStash = () => gl.git('for-each-ref', 'refs/stash') !== '';
+  expect(hasStash()).toBe(true);
   await page.locator('.toast').getByRole('button', { name: 'Drop the stash' }).click();
-  await expect.poll(() => gl.git('stash', 'list')).toBe('');
+  await expect.poll(hasStash).toBe(false);
 });
 
 test('with diff3 markers the conflict card shows the original version', async ({ gl }) => {

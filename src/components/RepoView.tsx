@@ -385,9 +385,11 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       if (info.head && !showWip) setScrollTarget({ sha: info.head, n: Date.now() });
       return;
     }
-    if (selected === WIP && !showWip) setSelected(info.head);
+    // After a conflicting stash apply the working copy stays selected even if this status predates the
+    // conflicts (a refresh from the file watcher can overtake the one the apply waited for).
+    if (selected === WIP && !showWip && !stashConflict) setSelected(info.head);
     if (!selected && showWip) setSelected(WIP);
-  }, [info, showWip, selected]);
+  }, [info, showWip, selected, stashConflict]);
 
   // Keep an open working-copy diff pointed at the list the file now lives in.
   useEffect(() => {
