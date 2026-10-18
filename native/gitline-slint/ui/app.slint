@@ -1,0 +1,842 @@
+// The spike screen: commit graph (or a diff in its place), staging panel with the commit box, or the
+// selected commit's details. Layout and colours follow src/styles.css and src/components/*.tsx.
+import { LineEdit, TextEdit, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+import "../../assets/fonts/IBMPlexSans-Regular.ttf";
+import "../../assets/fonts/IBMPlexSans-SemiBold.ttf";
+import "../../assets/fonts/JetBrainsMono-Regular.ttf";
+import "../../assets/fonts/JetBrainsMono-Italic.ttf";
+
+export struct GraphLine {
+    commands: string,
+    color: color,
+}
+
+export struct Pill {
+    label: string,
+    // 0 local, 1 remote, 2 tag
+    kind: int,
+    head: bool,
+    on-remote: bool,
+}
+
+export struct CommitRow {
+    sha: string,
+    short: string,
+    subject: string,
+    author: string,
+    date: string,
+    wip: bool,
+    lines: [GraphLine],
+    node-x: length,
+    node-color: color,
+    // 0 commit, 1 merge, 2 head, 3 wip
+    node: int,
+    pills: [Pill],
+}
+
+export struct FileRow {
+    path: string,
+    dir: string,
+    name: string,
+    status: string,
+    color: color,
+}
+
+export struct Seg {
+    text: string,
+    color: color,
+    italic: bool,
+    changed: bool,
+}
+
+export struct DiffRow {
+    // 0 hunk header, 1 add, 2 del, 3 context, 4 meta
+    kind: int,
+    hunk: int,
+    old-no: string,
+    new-no: string,
+    text: string,
+    segs: [Seg],
+}
+
+component FlatButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> primary;
+    in property <bool> small;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked;
+    height: root.small ? 22px : 28px;
+    min-width: label.preferred-width + (root.small ? 14px : 22px);
+    border-width: 1px;
+    border-color: root.primary && root.enabled ? Theme.accent : Theme.border;
+    background: !root.enabled ? transparent
+        : root.primary ? (touch.has-hover ? Theme.accent-strong : Theme.accent)
+        : (touch.has-hover ? Theme.bg-hover : Theme.bg-panel-2);
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    label := Text {
+        text: root.text;
+        font-size: root.small ? 12px : Theme.font-size;
+        font-weight: root.primary ? 600 : 400;
+        color: !root.enabled ? Theme.muted : root.primary ? Theme.bg : Theme.text;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component PillView inherits Rectangle {
+    in property <Pill> pill;
+    in property <color> tag;
+    height: 18px;
+    width: min(label.preferred-width + 12px, 140px);
+    border-width: 1px;
+    border-color: root.pill.kind == 2 ? Theme.muted : root.pill.head ? root.tag : root.tag.with-alpha(0.45);
+    background: root.pill.kind == 2 ? transparent : root.pill.head ? root.tag : root.tag.with-alpha(0.14);
+    label := Text {
+        x: 6px;
+        width: parent.width - 12px;
+        text: root.pill.label;
+        font-family: Theme.mono;
+        font-size: 11px;
+        font-weight: root.pill.head ? 600 : 400;
+        color: root.pill.kind == 2 ? Theme.text : root.pill.head ? Theme.bg : root.tag;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// One row of the history: ref labels, the graph cell and the commit's text.
+component CommitRowView inherits Rectangle {
+    in property <CommitRow> row;
+    in property <int> index;
+    in property <bool> selected;
+    in property <length> refs-width;
+    in property <length> graph-width;
+    in property <string> wip-label;
+    callback select(int);
+    height: 34px;
+    background: root.selected ? root.row.node-color.with-alpha(0.14) : touch.has-hover ? Theme.row-hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.row.wip ? "Uncommitted changes" : root.row.subject;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-action-default => { root.select(root.index); }
+
+    if root.selected: Rectangle {
+        x: 0;
+        width: 2px;
+        background: root.row.node-color;
+    }
+    HorizontalLayout {
+        Rectangle {
+            width: root.refs-width;
+            clip: true;
+            HorizontalLayout {
+                padding-left: 8px;
+                spacing: 4px;
+                alignment: start;
+                for p in root.row.pills: PillView {
+                    y: (parent.height - self.height) / 2;
+                    pill: p;
+                    tag: root.row.node-color;
+                }
+            }
+        }
+        Rectangle {
+            width: root.graph-width;
+            clip: true;
+            for l in root.row.lines: Path {
+                width: parent.width;
+                height: parent.height;
+                viewbox-width: self.width / 1px;
+                viewbox-height: 34;
+                commands: l.commands;
+                stroke: l.color;
+                stroke-width: 2.5px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+            }
+            // Node: hollow circle (commit), ring with a dot (merge), filled with a halo (HEAD), dashed (WIP).
+            if root.row.node == 2: Rectangle {
+                x: root.row.node-x - 8.5px;
+                y: 17px - 8.5px;
+                width: 17px;
+                height: 17px;
+                border-radius: 8.5px;
+                border-width: 2.5px;
+                border-color: root.row.node-color.with-alpha(0.35);
+            }
+            Rectangle {
+                x: root.row.node-x - self.width / 2;
+                y: 17px - self.height / 2;
+                width: root.row.node == 0 || root.row.node == 3 ? 10px : 11px;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: root.row.node == 2 ? root.row.node-color : Theme.bg-graph;
+                border-width: root.row.node == 2 ? 0 : 2.5px;
+                border-color: root.row.node == 3 ? Theme.orange : root.row.node-color;
+            }
+            if root.row.node == 1: Rectangle {
+                x: root.row.node-x - 2px;
+                y: 15px;
+                width: 4px;
+                height: 4px;
+                border-radius: 2px;
+                background: root.row.node-color;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.row.wip ? root.wip-label : root.row.subject;
+            color: root.row.wip ? Theme.orange : root.selected ? Theme.text-strong : Theme.text;
+            font-italic: root.row.wip;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 120px;
+            text: root.row.author;
+            color: Theme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            width: 112px;
+            text: root.row.date;
+            color: Theme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+        }
+        Rectangle { width: 10px; }
+    }
+    touch := TouchArea {
+        clicked => { root.select(root.index); }
+    }
+}
+
+component FileRowView inherits Rectangle {
+    in property <FileRow> file;
+    in property <bool> active;
+    in property <string> action;
+    callback open;
+    callback act;
+    height: 26px;
+    background: root.active ? Theme.bg-active : touch.has-hover ? Theme.bg-hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.file.path;
+    accessible-action-default => { root.open(); }
+    touch := TouchArea {
+        clicked => { root.open(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 8px;
+        spacing: 8px;
+        Text {
+            width: 12px;
+            text: root.file.status;
+            color: root.file.color;
+            font-family: Theme.mono;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            Text {
+                text: root.file.name;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 0;
+            }
+            Text {
+                text: root.file.dir == "" ? "" : "  " + root.file.dir;
+                color: Theme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+        // Always there for keyboard and screen-reader users; shown on hover, as in the Electron app.
+        if root.action != "": FlatButton {
+            y: 2px;
+            opacity: touch.has-hover || root.active || self.hovered ? 1 : 0;
+            small: true;
+            text: root.action;
+            accessible-label: root.action + " " + root.file.path;
+            clicked => { root.act(); }
+        }
+    }
+}
+
+component PanelHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> action;
+    in property <bool> action-enabled: true;
+    callback act;
+    height: 34px;
+    background: Theme.bg-panel-2;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-soft; }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        Text {
+            text: root.title;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        if root.action != "": FlatButton {
+            y: 6px;
+            small: true;
+            text: root.action;
+            enabled: root.action-enabled;
+            clicked => { root.act(); }
+        }
+    }
+}
+
+// One line of the diff: gutters, sign and the highlighted text. Double-clicking a line swaps it for a
+// read-only text field so characters within it can be selected.
+component DiffRowView inherits Rectangle {
+    in property <DiffRow> row;
+    in property <int> index;
+    in property <bool> selected;
+    in property <bool> can-apply;
+    in property <string> hunk-action;
+    in property <bool> char-select;
+    callback apply-hunk(int);
+    callback press(int, bool);
+    callback drag-to(int);
+    callback start-char-select(int);
+    callback copy-chars(string);
+    height: 20px;
+    clip: true;
+    background: root.row.kind == 0 ? Theme.bg-panel-2 : root.row.kind == 1 ? Theme.diff-add-bg : root.row.kind == 2 ? Theme.diff-del-bg : transparent;
+
+    touch := TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.press(root.index, e.modifiers.shift);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.drag-to(root.index + floor(self.mouse-y / root.height));
+            }
+        }
+        double-clicked => { if (root.row.kind != 0) { root.start-char-select(root.index); } }
+    }
+
+    if root.row.kind == 0: HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        Text {
+            text: root.row.text;
+            color: Theme.muted;
+            font-family: Theme.mono;
+            font-size: Theme.mono-size;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.can-apply: FlatButton {
+            y: 0px;
+            height: 18px;
+            small: true;
+            text: root.hunk-action;
+            accessible-label: root.hunk-action + " " + (root.row.hunk + 1);
+            clicked => { root.apply-hunk(root.row.hunk); }
+        }
+    }
+    if root.row.kind != 0: HorizontalLayout {
+        Rectangle {
+            width: 44px;
+            background: root.row.kind == 1 ? Theme.diff-add-ln-bg : root.row.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
+            Text {
+                x: 0;
+                width: parent.width - 6px;
+                text: root.row.old-no;
+                color: Theme.ln;
+                font-family: Theme.mono;
+                font-size: 11px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            width: 44px;
+            background: root.row.kind == 1 ? Theme.diff-add-ln-bg : root.row.kind == 2 ? Theme.diff-del-ln-bg : Theme.ln-bg;
+            Text {
+                x: 0;
+                width: parent.width - 6px;
+                text: root.row.new-no;
+                color: Theme.ln;
+                font-family: Theme.mono;
+                font-size: 11px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            width: 18px;
+            text: root.row.kind == 1 ? "+" : root.row.kind == 2 ? "-" : "";
+            color: root.row.kind == 1 ? Theme.diff-add-sign : Theme.diff-del-sign;
+            font-family: Theme.mono;
+            font-size: Theme.mono-size;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        if !root.char-select: HorizontalLayout {
+            alignment: start;
+            horizontal-stretch: 1;
+            for s in root.row.segs: Rectangle {
+                width: t.preferred-width;
+                background: s.changed ? (root.row.kind == 1 ? Theme.diff-add-word : Theme.diff-del-word) : transparent;
+                t := Text {
+                    text: s.text;
+                    color: s.color;
+                    font-italic: s.italic;
+                    font-family: Theme.mono;
+                    font-size: Theme.mono-size;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        if root.char-select: line-input := TextInput {
+            horizontal-stretch: 1;
+            text: root.row.text;
+            read-only: true;
+            single-line: true;
+            color: Theme.text-strong;
+            selection-background-color: Theme.accent.with-alpha(0.45);
+            font-family: Theme.mono;
+            font-size: Theme.mono-size;
+            vertical-alignment: center;
+            init => {
+                self.focus();
+                self.select-all();
+            }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.start-char-select(-1);
+                    return accept;
+                }
+                reject
+            }
+        }
+    }
+    if root.selected: Rectangle {
+        background: Theme.selection;
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Gitline (Slint spike) - " + root.repo-name;
+    min-width: 960px;
+    min-height: 640px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: Theme.bg;
+    default-font-family: Theme.font;
+    default-font-size: Theme.font-size;
+
+    in property <string> repo-name;
+    in property <string> branch;
+    in property <string> status-text;
+    in property <bool> status-error;
+
+    // History
+    in property <[CommitRow]> commits;
+    in-out property <int> selected-commit;
+    in property <length> graph-width: 60px;
+    in property <string> wip-label;
+    callback select-commit(int);
+
+    // Right panel
+    in property <bool> wip-selected;
+    in property <[FileRow]> unstaged;
+    in property <[FileRow]> staged;
+    in property <[FileRow]> commit-files;
+    in property <string> commit-title;
+    in property <string> commit-meta;
+    in property <string> commit-message;
+    // -1 none; otherwise which list (0 unstaged, 1 staged, 2 commit) and row is open in the diff
+    in property <int> active-list: -1;
+    in property <int> active-file: -1;
+    callback open-file(int, int);
+    callback stage-file(int);
+    callback unstage-file(int);
+    callback stage-all();
+    callback unstage-all();
+
+    // Commit box
+    in-out property <string> summary;
+    in-out property <string> description;
+    callback commit();
+
+    // Diff
+    in property <bool> diff-open;
+    in property <string> diff-path;
+    in property <string> diff-note;
+    in property <[DiffRow]> diff-rows;
+    in property <bool> diff-can-apply;
+    in property <bool> diff-staged;
+    in property <bool> diff-is-wip;
+    in-out property <int> sel-anchor: -1;
+    in-out property <int> sel-cursor: -1;
+    in-out property <int> char-row: -1;
+    out property <int> sel-first: min(root.sel-anchor, root.sel-cursor);
+    out property <int> sel-last: max(root.sel-anchor, root.sel-cursor);
+    in property <int> sel-changes;
+    callback close-diff();
+    callback toggle-file();
+    callback apply-hunk(int);
+    callback apply-lines();
+    callback copy-selection();
+    callback selection-changed();
+
+    // The clipboard is only reachable through a text input, so copying goes through a hidden one.
+    public function set-clipboard(text: string) {
+        clipboard-buffer.text = text;
+        clipboard-buffer.select-all();
+        clipboard-buffer.copy();
+        clipboard-buffer.text = "";
+    }
+
+    property <length> right-width: 320px;
+    property <length> refs-width: 150px;
+
+    clipboard-buffer := TextInput {
+        width: 0;
+        height: 0;
+        visible: false;
+    }
+
+    VerticalLayout {
+        // Toolbar
+        Rectangle {
+            height: 40px;
+            background: Theme.bg-toolbar;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 10px;
+                Text {
+                    text: root.repo-name;
+                    font-weight: 600;
+                    color: Theme.text-strong;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.branch;
+                    font-family: Theme.mono;
+                    font-size: 12px;
+                    color: Theme.accent;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // Centre: the graph, or a diff in its place.
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.bg-graph;
+                if !root.diff-open: graph-scope := FocusScope {
+                    key-pressed(e) => {
+                        if (e.text == Key.UpArrow && root.selected-commit > 0) {
+                            root.select-commit(root.selected-commit - 1);
+                            return accept;
+                        }
+                        if (e.text == Key.DownArrow && root.selected-commit < root.commits.length - 1) {
+                            root.select-commit(root.selected-commit + 1);
+                            return accept;
+                        }
+                        reject
+                    }
+                    graph-list := ListView {
+                        for row[i] in root.commits: CommitRowView {
+                            row: row;
+                            index: i;
+                            selected: i == root.selected-commit;
+                            refs-width: root.refs-width;
+                            graph-width: root.graph-width;
+                            wip-label: root.wip-label;
+                            select(i) => {
+                                graph-scope.focus();
+                                root.select-commit(i);
+                            }
+                        }
+                    }
+                }
+                if root.diff-open: VerticalLayout {
+                    Rectangle {
+                        height: 40px;
+                        background: Theme.bg-panel-2;
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-soft; }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 6px;
+                            Text {
+                                text: root.diff-path;
+                                font-family: Theme.mono;
+                                font-size: 12px;
+                                color: Theme.text-strong;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: root.diff-note;
+                                font-size: 12px;
+                                color: Theme.muted;
+                                vertical-alignment: center;
+                            }
+                            if root.diff-can-apply && root.sel-changes > 0: FlatButton {
+                                y: 6px;
+                                text: (root.diff-staged ? "Unstage " : "Stage ") + root.sel-changes + (root.sel-changes == 1 ? " line" : " lines");
+                                accessible-label: root.diff-staged ? "Unstage lines" : "Stage lines";
+                                clicked => { root.apply-lines(); }
+                            }
+                            if root.sel-anchor >= 0: FlatButton {
+                                y: 6px;
+                                text: "Copy";
+                                clicked => { root.copy-selection(); }
+                            }
+                            if root.diff-is-wip: FlatButton {
+                                y: 6px;
+                                text: root.diff-staged ? "Unstage file" : "Stage file";
+                                clicked => { root.toggle-file(); }
+                            }
+                            FlatButton {
+                                y: 6px;
+                                text: "Close";
+                                clicked => { root.close-diff(); }
+                            }
+                        }
+                    }
+                    diff-scope := FocusScope {
+                        vertical-stretch: 1;
+                        init => { self.focus(); }
+                        key-pressed(e) => {
+                            if ((e.modifiers.control || e.modifiers.meta) && (e.text == "c" || e.text == "C")) {
+                                root.copy-selection();
+                                return accept;
+                            }
+                            if ((e.modifiers.control || e.modifiers.meta) && (e.text == "a" || e.text == "A")) {
+                                root.sel-anchor = 0;
+                                root.sel-cursor = root.diff-rows.length - 1;
+                                root.selection-changed();
+                                return accept;
+                            }
+                            if (e.text == Key.Escape) {
+                                if (root.sel-anchor >= 0) {
+                                    root.sel-anchor = -1;
+                                    root.sel-cursor = -1;
+                                    root.selection-changed();
+                                } else {
+                                    root.close-diff();
+                                }
+                                return accept;
+                            }
+                            reject
+                        }
+                        ListView {
+                            for row[i] in root.diff-rows: DiffRowView {
+                                row: row;
+                                index: i;
+                                selected: root.sel-anchor >= 0 && i >= root.sel-first && i <= root.sel-last && root.char-row != i;
+                                can-apply: root.diff-can-apply;
+                                hunk-action: root.diff-staged ? "Unstage hunk" : "Stage hunk";
+                                char-select: root.char-row == i;
+                                apply-hunk(h) => { root.apply-hunk(h); }
+                                press(i, extend) => {
+                                    root.char-row = -1;
+                                    diff-scope.focus();
+                                    if (!extend || root.sel-anchor < 0) {
+                                        root.sel-anchor = i;
+                                    }
+                                    root.sel-cursor = i;
+                                    root.selection-changed();
+                                }
+                                drag-to(i) => {
+                                    root.sel-cursor = max(0, min(i, root.diff-rows.length - 1));
+                                    root.selection-changed();
+                                }
+                                start-char-select(i) => {
+                                    root.char-row = i;
+                                    if (i < 0) {
+                                        diff-scope.focus();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Splitter
+            Rectangle {
+                width: 5px;
+                background: splitter.has-hover || splitter.pressed ? Theme.border : Theme.bg;
+                splitter := TouchArea {
+                    mouse-cursor: col-resize;
+                    moved => {
+                        if (self.pressed) {
+                            root.right-width = max(260px, min(root.width - 520px, root.right-width - (self.mouse-x - self.pressed-x)));
+                        }
+                    }
+                }
+            }
+
+            // Right panel
+            Rectangle {
+                width: root.right-width;
+                background: Theme.bg-panel;
+                if root.wip-selected: VerticalLayout {
+                    PanelHeader {
+                        title: "Unstaged files (" + root.unstaged.length + ")";
+                        action: "Stage all";
+                        action-enabled: root.unstaged.length > 0;
+                        act => { root.stage-all(); }
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for f[i] in root.unstaged: FileRowView {
+                            file: f;
+                            action: "Stage";
+                            active: root.active-list == 0 && root.active-file == i;
+                            open => { root.open-file(0, i); }
+                            act => { root.stage-file(i); }
+                        }
+                    }
+                    PanelHeader {
+                        title: "Staged files (" + root.staged.length + ")";
+                        action: "Unstage all";
+                        action-enabled: root.staged.length > 0;
+                        act => { root.unstage-all(); }
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for f[i] in root.staged: FileRowView {
+                            file: f;
+                            action: "Unstage";
+                            active: root.active-list == 1 && root.active-file == i;
+                            open => { root.open-file(1, i); }
+                            act => { root.unstage-file(i); }
+                        }
+                    }
+                    // Commit box
+                    Rectangle {
+                        background: Theme.bg-panel-2;
+                        Rectangle { y: 0; height: 1px; background: Theme.border-soft; }
+                        VerticalLayout {
+                            padding: 12px;
+                            padding-top: 10px;
+                            spacing: 8px;
+                            Text {
+                                text: "Commit";
+                                font-weight: 600;
+                            }
+                            summary-input := LineEdit {
+                                placeholder-text: "Summary";
+                                text <=> root.summary;
+                                accessible-label: "Summary";
+                            }
+                            TextEdit {
+                                height: 72px;
+                                placeholder-text: "Description";
+                                text <=> root.description;
+                                wrap: word-wrap;
+                                accessible-label: "Description";
+                            }
+                            FlatButton {
+                                primary: true;
+                                text: root.staged.length == 0 ? "Stage files to commit"
+                                    : "Commit " + root.staged.length + (root.staged.length == 1 ? " file" : " files");
+                                accessible-label: "Commit";
+                                enabled: root.staged.length > 0 && root.summary != "";
+                                clicked => { root.commit(); }
+                            }
+                        }
+                    }
+                }
+                if !root.wip-selected: VerticalLayout {
+                    Rectangle {
+                        background: Theme.bg-panel-2;
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-soft; }
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 6px;
+                            Text {
+                                text: root.commit-title;
+                                font-weight: 600;
+                                color: Theme.text-strong;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: root.commit-meta;
+                                font-size: 12px;
+                                color: Theme.muted;
+                                wrap: word-wrap;
+                            }
+                            if root.commit-message != "": Text {
+                                text: root.commit-message;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                max-height: 140px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    PanelHeader {
+                        title: root.commit-files.length + (root.commit-files.length == 1 ? " file changed" : " files changed");
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for f[i] in root.commit-files: FileRowView {
+                            file: f;
+                            action: "";
+                            active: root.active-list == 2 && root.active-file == i;
+                            open => { root.open-file(2, i); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Status bar
+        Rectangle {
+            height: 24px;
+            background: Theme.bg-toolbar;
+            Rectangle { y: 0; height: 1px; background: Theme.border; }
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                text: root.status-text;
+                color: root.status-error ? Theme.red : Theme.muted;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
