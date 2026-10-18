@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["gitline-core", "gitline-slint", "gitline-iced"]
+members = ["gitline-core", "gitline-iced"]
 
 [workspace.package]
 version = "0.1.0"
