@@ -36,6 +36,7 @@ import { DiffView } from './DiffView';
 import { FileHistory, type FileViewMode } from './FileHistory';
 import { InteractiveRebase, type RebaseStep } from './InteractiveRebase';
 import { ConflictEditor } from './ConflictEditor';
+import { conflictSides, isDeletion } from '../lib/conflicts';
 import { CreatePrDialog, type NewPr } from './CreatePrDialog';
 import { RecoverDialog } from './RecoverDialog';
 import { GitignoreDialog } from './GitignoreDialog';
@@ -156,6 +157,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [gitignoreOpen, setGitignoreOpen] = useState(false);
   const [sideFocus, setSideFocus] = useState<{ key: string; n: number } | null>(null);
   const [rebaseEditor, setRebaseEditor] = useState<{ base: string; commits: RebaseCommit[] } | null>(null);
+  // A stash apply / pop that stopped on conflicts. `staged` is what was staged before it, so only the
+  // stash's own changes are unstaged once the last conflict is resolved.
+  const [stashConflict, setStashConflict] = useState<{ ref: string; sha: string; pop: boolean; staged: string[] } | null>(null);
   const filterRef = useRef(graphFilter);
   filterRef.current = graphFilter;
   // How many commits the graph loads; "Load more" raises it.
@@ -891,7 +895,88 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     await run('Stashing…', () => git('stash', path, message), 'Stashed changes');
     resetMessage();
   };
-  const pop = () => run('Popping stash…', () => git('stashPop', path), 'Popped stash');
+  const pop = () => applyStash(undefined, true);
+
+  // Applies or pops a stash, remembering it if it stops on conflicts (git keeps the stash then).
+  const applyStash = async (ref: string | undefined, isPop: boolean) => {
+    const s = ref ? stashes.find((x) => x.ref === ref) : stashes[0];
+    const staged = status.staged.map((f) => f.path);
+    const r = await run(
+      isPop ? 'Popping stash…' : 'Applying stash…',
+      () => git<OpResult>(isPop ? 'stashPop' : 'stashApply', path, ...(ref ? [ref] : [])),
+      isPop ? 'Popped stash' : 'Applied stash'
+    );
+    if (r?.conflict) {
+      if (s) setStashConflict({ ref: s.ref, sha: s.sha, pop: isPop, staged });
+      // Straight to the conflicted files (status has been refreshed by now, so the working copy row exists).
+      setFileView(null);
+      setDiff(null);
+      setCompareSha(null);
+      setSelected(WIP);
+    }
+    return r;
+  };
+
+  // Once the stash's last conflict is resolved, leave its changes unstaged, the way a clean apply does,
+  // and offer to drop a popped stash that git kept.
+  const stashConflictSeen = useRef(false);
+  useEffect(() => {
+    if (!stashConflict) return;
+    if (status.conflicted.length) {
+      stashConflictSeen.current = true;
+      return;
+    }
+    if (!stashConflictSeen.current) return;
+    stashConflictSeen.current = false;
+    const sc = stashConflict;
+    setStashConflict(null);
+    const files = status.staged.map((f) => f.path).filter((f) => !sc.staged.includes(f));
+    (async () => {
+      if (files.length) await run('Unstaging…', () => git('unstage', path, files));
+      if (!sc.pop) return ui.toast(`Applied ${sc.ref}. Its changes are unstaged.`, 'success');
+      ui.toast(`Conflicts resolved. The changes from ${sc.ref} are unstaged, and git kept the stash.`, 'success', {
+        label: 'Drop the stash',
+        onClick: async () => {
+          // Stash indexes shift as stashes come and go, so find this one again by its commit.
+          const now = (await git<Stash[]>('stashes', path).catch(() => [])).find((x) => x.sha === sc.sha);
+          if (!now) return ui.toast(`${sc.ref} is already gone`, 'info');
+          run('Dropping stash…', () => git('stashDrop', path, now.ref), `Dropped ${now.ref}`);
+        },
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, stashConflict]);
+
+  // What git's "ours" / "theirs" are for the conflicts in progress.
+  const sides = useMemo(() => conflictSides(info, stashConflict && !info?.state ? stashConflict.ref : null), [info, stashConflict]);
+
+  // Taking the upstream side of a whole file during a rebase drops the user's own change to it.
+  const confirmDropsCommit = (file: string, upstream: boolean) =>
+    !upstream ||
+    info?.state !== 'rebase' ||
+    ui.confirm({
+      title: "Drop your commit's changes",
+      message: (
+        <>
+          This drops your commit's changes to <b>{file}</b>.
+        </>
+      ),
+      confirmText: 'Drop Changes',
+      danger: true,
+    });
+  const takeSide = async (f: FileChange, side: 'ours' | 'theirs') => {
+    if (!(await confirmDropsCommit(f.path, side === 'ours'))) return;
+    return run('Resolving…', () => git('resolve', path, f.path, side), `Took ${sides[side].noun} for ${f.path}`);
+  };
+  // Keeping a file the user's commit deleted, or deleting one it changed or added, also drops their change.
+  const keepConflictFile = async (f: FileChange) => {
+    if (!(await confirmDropsCommit(f.path, f.conflict === 'deleted-by-them'))) return;
+    return run('Resolving…', () => git('stage', path, [f.path]), `Kept ${f.path}`);
+  };
+  const deleteConflictFile = async (f: FileChange) => {
+    if (!(await confirmDropsCommit(f.path, f.conflict === 'deleted-by-us' || f.conflict === 'added-by-them'))) return;
+    return run('Resolving…', () => git('resolveDelete', path, f.path), `Deleted ${f.path}`);
+  };
 
   const commit = async () => {
     // Like git, refuse a message that is just the untouched template.
@@ -1210,9 +1295,9 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   // Viewing a stash shows it in the commit panel with its own actions.
   const selectedStash = stashes.find((s) => s.sha === selected) ?? null;
   const stashAction = async (s: Stash, action: 'apply' | 'pop' | 'drop') => {
-    if (action === 'apply') return run('Applying stash…', () => git('stashApply', path, s.ref), 'Applied stash');
+    if (action === 'apply') return applyStash(s.ref, false);
     if (action === 'pop') {
-      await run('Popping stash…', () => git('stashPop', path, s.ref), 'Popped stash');
+      await applyStash(s.ref, true);
       return showChanges();
     }
     if (await ui.confirm({ title: 'Delete stash', message: <>Delete <b>{s.message}</b>?</>, confirmText: 'Delete', danger: true })) {
@@ -1223,8 +1308,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
 
   const stashMenu = (e: React.MouseEvent, s: Stash) =>
     ui.menu(e, [
-      { label: 'Apply stash', onClick: () => run('Applying stash…', () => git('stashApply', path, s.ref), 'Applied stash') },
-      { label: 'Pop stash', onClick: () => run('Popping stash…', () => git('stashPop', path, s.ref), 'Popped stash') },
+      { label: 'Apply stash', onClick: () => applyStash(s.ref, false) },
+      { label: 'Pop stash', onClick: () => applyStash(s.ref, true) },
       'sep',
       {
         label: 'Delete stash',
@@ -1264,9 +1349,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     const full = joinPath(path, f.path);
     const ext = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.')) : null;
     const items: MenuItem[] = [];
-    if (f.status === 'U') {
-      items.push({ label: 'Take ours', onClick: () => run('Resolving…', () => git('resolve', path, f.path, 'ours')) });
-      items.push({ label: 'Take theirs', onClick: () => run('Resolving…', () => git('resolve', path, f.path, 'theirs')) });
+    if (f.status === 'U' && isDeletion(f.conflict)) {
+      if (f.conflict !== 'both-deleted') items.push({ label: 'Keep file', onClick: () => keepConflictFile(f) });
+      items.push({ label: 'Delete file', onClick: () => deleteConflictFile(f) });
+    } else if (f.status === 'U') {
+      items.push({ label: `Take ${sides.ours.label.toLowerCase()}`, onClick: () => takeSide(f, 'ours') });
+      items.push({ label: `Take ${sides.theirs.label.toLowerCase()}`, onClick: () => takeSide(f, 'theirs') });
       items.push({ label: 'Mark resolved', onClick: () => run('Staging…', () => git('stage', path, [f.path])) });
     } else if (staged) items.push({ label: 'Unstage', onClick: () => run('Unstaging…', () => git('unstage', path, [f.path])) });
     else {
@@ -1400,8 +1488,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       }
     }
     for (const s of stashes) {
-      add('Stash', `Apply ${s.ref}: ${s.message}`, () => run('Applying stash…', () => git('stashApply', path, s.ref), 'Applied stash'));
-      add('Stash', `Pop ${s.ref}: ${s.message}`, () => run('Popping stash…', () => git('stashPop', path, s.ref), 'Popped stash'));
+      add('Stash', `Apply ${s.ref}: ${s.message}`, () => applyStash(s.ref, false));
+      add('Stash', `Pop ${s.ref}: ${s.message}`, () => applyStash(s.ref, true));
     }
     return [...cmds, ...appCommands];
   };
@@ -1564,19 +1652,22 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
             <ConflictEditor
               key={diff.file.path}
               repo={path}
-              path={diff.file.path}
+              file={status.conflicted.find((f) => f.path === diff.file.path) ?? diff.file}
+              sides={sides}
               onClose={() => setDiff(null)}
-              onResolve={(content) =>
+              onResolve={(content, encoding) =>
                 run(
                   'Resolving…',
                   async () => {
-                    await git('writeFile', path, diff.file.path, content);
+                    await git('writeConflictFile', path, diff.file.path, content, encoding);
                     await git('stage', path, [diff.file.path]);
                   },
                   `Resolved ${diff.file.path}`
                 )
               }
-              onTake={(side) => run('Resolving…', () => git('resolve', path, diff.file.path, side), `Took ${side} for ${diff.file.path}`)}
+              onTake={(side) => takeSide(diff.file, side)}
+              onKeep={() => keepConflictFile(diff.file)}
+              onDelete={() => deleteConflictFile(diff.file)}
             />
           ) : diff ? (
             <DiffView
@@ -1691,8 +1782,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
               onDiscardAll={discardAll}
               onFileMenu={fileMenu}
               onCommit={commit}
-              onResolve={(f, side) => run('Resolving…', () => git('resolve', path, f.path, side))}
+              sides={sides}
+              stashConflict={stashConflict}
+              onResolve={takeSide}
               onMarkResolved={(f) => run('Staging…', () => git('stage', path, [f.path]))}
+              onKeep={keepConflictFile}
+              onDelete={deleteConflictFile}
               onAbort={() => info.state && run('Aborting…', () => git('abort', path, info.state), 'Aborted')}
               onContinue={() => info.state && run('Continuing…', () => git('continueOp', path, info.state))}
               onSkip={() => run('Skipping…', () => git('skipRebase', path))}

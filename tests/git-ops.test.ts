@@ -275,6 +275,165 @@ describe('merge conflicts', () => {
     expect(sh(dir, 'log', '-1', '--format=%p').split(' ')).toHaveLength(2);
   });
 
+  it('reports the kind of every conflicted file', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'both.txt', 'base\n');
+    write(dir, 'ours-edit.txt', 'base\n');
+    write(dir, 'theirs-edit.txt', 'base\n');
+    write(dir, 'moved.txt', 'one\ntwo\nthree\nfour\n');
+    await commitAll(dir, 'base');
+    await ops.createBranch(dir, 'other', undefined, true);
+    write(dir, 'both.txt', 'theirs\n');
+    write(dir, 'added.txt', 'theirs\n');
+    fs.rmSync(path.join(dir, 'ours-edit.txt'));
+    write(dir, 'theirs-edit.txt', 'theirs\n');
+    sh(dir, 'mv', 'moved.txt', 'theirs-name.txt');
+    await commitAll(dir, 'other');
+    await ops.checkout(dir, 'main');
+    write(dir, 'both.txt', 'ours\n');
+    write(dir, 'added.txt', 'ours\n');
+    write(dir, 'ours-edit.txt', 'ours\n');
+    fs.rmSync(path.join(dir, 'theirs-edit.txt'));
+    sh(dir, 'mv', 'moved.txt', 'our-name.txt');
+    await commitAll(dir, 'main');
+    expect((await ops.merge(dir, 'other')).conflict).toBe(true);
+
+    const kinds = Object.fromEntries((await ops.status(dir)).conflicted.map((f: { path: string; status: string; conflict: string }) => [f.path, [f.status, f.conflict]]));
+    expect(kinds).toEqual({
+      'both.txt': ['U', 'both-modified'],
+      'added.txt': ['U', 'both-added'],
+      'ours-edit.txt': ['U', 'deleted-by-them'],
+      'theirs-edit.txt': ['U', 'deleted-by-us'],
+      'moved.txt': ['U', 'both-deleted'],
+      'our-name.txt': ['U', 'added-by-us'],
+      'theirs-name.txt': ['U', 'added-by-them'],
+    });
+
+    // A deletion conflict is never opened as text: the deleted file reads as missing.
+    expect(await ops.readConflictFile(dir, 'moved.txt')).toEqual({ text: null, encoding: 'utf-8' });
+
+    // Keep file / Delete file settle the deletion kinds.
+    await ops.stage(dir, ['ours-edit.txt']);
+    await ops.resolveDelete(dir, 'theirs-edit.txt');
+    await ops.resolveDelete(dir, 'moved.txt');
+    await ops.stage(dir, ['our-name.txt']);
+    // Taking the side that never had the file deletes it instead of failing.
+    await ops.resolve(dir, 'theirs-name.txt', 'ours');
+    await ops.resolve(dir, 'both.txt', 'theirs');
+    await ops.resolve(dir, 'added.txt', 'ours');
+    expect((await ops.status(dir)).conflicted).toEqual([]);
+    await ops.continueOp(dir, 'merge');
+    expect(sh(dir, 'ls-files').split('\n').sort()).toEqual(['added.txt', 'both.txt', 'our-name.txt', 'ours-edit.txt']);
+    expect(read(dir, 'ours-edit.txt')).toBe('ours\n');
+    expect(read(dir, 'both.txt')).toBe('theirs\n');
+  });
+
+  it('names the commit being applied and the target during a rebase', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'c.txt', 'base\n');
+    await commitAll(dir, 'base');
+    await ops.createBranch(dir, 'mine', undefined, true);
+    write(dir, 'c.txt', 'mine\n');
+    const mine = await commitAll(dir, 'my change');
+    await ops.checkout(dir, 'main');
+    write(dir, 'c.txt', 'upstream\n');
+    const upstream = await commitAll(dir, 'upstream change');
+    await ops.checkout(dir, 'mine');
+    expect((await ops.rebase(dir, 'main')).conflict).toBe(true);
+
+    const info = await ops.info(dir);
+    expect(info.state).toBe('rebase');
+    expect(info.opCommit).toEqual({ sha: mine, subject: 'my change', name: null });
+    expect(info.onto).toEqual({ sha: upstream, subject: 'upstream change', name: 'main' });
+    // git's "theirs" is the user's own commit here.
+    await ops.resolve(dir, 'c.txt', 'theirs');
+    await ops.continueOp(dir, 'rebase');
+    expect(read(dir, 'c.txt')).toBe('mine\n');
+    expect(subjects(dir)).toEqual(['my change', 'upstream change', 'base']);
+  });
+
+  it('names the merged branch and the picked commit', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'c.txt', 'base\n');
+    await commitAll(dir, 'base');
+    await ops.createBranch(dir, 'feature', undefined, true);
+    write(dir, 'c.txt', 'feature\n');
+    const pick = await commitAll(dir, 'feature change');
+    await ops.checkout(dir, 'main');
+    write(dir, 'c.txt', 'main\n');
+    await commitAll(dir, 'main change');
+    await ops.merge(dir, 'feature');
+    expect((await ops.info(dir)).opCommit).toEqual({ sha: pick, subject: 'feature change', name: 'feature' });
+    await ops.abort(dir, 'merge');
+    await ops.cherryPick(dir, pick);
+    const info = await ops.info(dir);
+    expect(info.state).toBe('cherry-pick');
+    expect(info.opCommit).toMatchObject({ sha: pick, subject: 'feature change' });
+    expect(info.onto).toBeNull();
+  });
+
+  it('round-trips a Latin-1 file byte for byte', async () => {
+    const dir = await tmpRepo();
+    const latin1 = (s: string) => Buffer.from(s, 'latin1');
+    fs.writeFileSync(path.join(dir, 'l.txt'), latin1('caf\xe9\nna\xefve = 1\n'));
+    await commitAll(dir, 'base');
+    await ops.createBranch(dir, 'b', undefined, true);
+    fs.writeFileSync(path.join(dir, 'l.txt'), latin1('caf\xe9\nna\xefve = 2\n'));
+    await commitAll(dir, 'two');
+    await ops.checkout(dir, 'main');
+    fs.writeFileSync(path.join(dir, 'l.txt'), latin1('caf\xe9\nna\xefve = 3\n'));
+    await commitAll(dir, 'three');
+    await ops.merge(dir, 'b');
+
+    const { text, encoding } = await ops.readConflictFile(dir, 'l.txt');
+    expect(encoding).toBe('latin1');
+    expect(text).toContain('caf\xe9\n<<<<<<<');
+    const resolvedText = text.replace(/<<<<<<<[^]*?=======\n([^]*?)>>>>>>>.*\n/, '$1');
+    await ops.writeConflictFile(dir, 'l.txt', resolvedText, encoding);
+    expect(fs.readFileSync(path.join(dir, 'l.txt')).equals(latin1('caf\xe9\nna\xefve = 2\n'))).toBe(true);
+    // Characters Latin-1 can't hold are refused rather than mangled.
+    await expect(ops.writeConflictFile(dir, 'l.txt', 'caf\xe9 \u20ac\n', encoding)).rejects.toThrow(/Latin-1.*€/);
+    expect(fs.readFileSync(path.join(dir, 'l.txt')).equals(latin1('caf\xe9\nna\xefve = 2\n'))).toBe(true);
+  });
+
+  it('keeps a UTF-8 byte order mark', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'bom.txt', '\uFEFFh\u00e9llo\n');
+    expect(await ops.readConflictFile(dir, 'bom.txt')).toEqual({ text: 'h\u00e9llo\n', encoding: 'utf-8-bom' });
+    await ops.writeConflictFile(dir, 'bom.txt', 'h\u00e9llo w\u00f6rld\n', 'utf-8-bom');
+    expect(read(dir, 'bom.txt')).toBe('\uFEFFh\u00e9llo w\u00f6rld\n');
+  });
+
+  it('leaves a conflicted stash pop unstaged once resolved', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'c.txt', 'base\n');
+    write(dir, 'other.txt', 'base\n');
+    await commitAll(dir, 'base');
+    write(dir, 'c.txt', 'stashed\n');
+    write(dir, 'other.txt', 'stashed\n');
+    await ops.stash(dir, 'wip');
+    write(dir, 'c.txt', 'committed\n');
+    await commitAll(dir, 'change');
+    const before = (await ops.status(dir)).staged.map((f: { path: string }) => f.path);
+    const r = await ops.stashPop(dir);
+    expect(r.conflict).toBe(true);
+    // git keeps the stash after a conflicting pop.
+    expect(await ops.stashes(dir)).toHaveLength(1);
+    expect(await ops.info(dir)).toMatchObject({ state: null, opCommit: null });
+
+    await ops.writeConflictFile(dir, 'c.txt', 'stashed and committed\n', 'utf-8');
+    await ops.stage(dir, ['c.txt']);
+    const st = await ops.status(dir);
+    expect(st.conflicted).toEqual([]);
+    await ops.unstage(dir, st.staged.map((f: { path: string }) => f.path).filter((p: string) => !before.includes(p)));
+    const after = await ops.status(dir);
+    expect(after.staged).toEqual([]);
+    expect(after.unstaged.map((f: { path: string }) => f.path).sort()).toEqual(['c.txt', 'other.txt']);
+    expect(read(dir, 'c.txt')).toBe('stashed and committed\n');
+    await ops.stashDrop(dir, 'stash@{0}');
+    expect(await ops.stashes(dir)).toEqual([]);
+  });
+
   it('refuses file access outside the repo', async () => {
     const dir = await tmpRepo();
     for (const bad of ['../x', path.resolve(dir, '..', 'x'), '.']) await expect(ops.readFile(dir, bad)).rejects.toThrow(/outside/);

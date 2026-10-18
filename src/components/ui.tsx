@@ -23,6 +23,12 @@ interface ConfirmOpts {
 
 type ToastKind = 'error' | 'info' | 'success';
 
+// A button on a toast, for a follow-up the user may want ("Drop the stash").
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 // Where a menu opens. A dropdown passes the button it hangs from as `anchor` (a click event's
 // currentTarget counts too): the menu opens under it, and clicking that button again closes it.
 interface MenuEvent {
@@ -35,7 +41,7 @@ interface MenuEvent {
 }
 
 interface UI {
-  toast(msg: string, kind?: ToastKind): void;
+  toast(msg: string, kind?: ToastKind, action?: ToastAction): void;
   prompt(o: PromptOpts): Promise<string | null>;
   confirm(o: ConfirmOpts): Promise<boolean>;
   menu(e: MenuEvent, items: MenuItem[]): void;
@@ -52,6 +58,7 @@ interface Toast {
   id: number;
   msg: string;
   kind: ToastKind;
+  action?: ToastAction;
 }
 
 export function UIProvider({ children }: { children: ReactNode }) {
@@ -62,10 +69,11 @@ export function UIProvider({ children }: { children: ReactNode }) {
   // The dropdown button whose menu was just closed by pressing on it, so the click that follows doesn't reopen it.
   const closedBy = useRef<{ anchor: Element; at: number } | null>(null);
 
-  const toast = useCallback((msg: string, kind: ToastKind = 'info') => {
+  const toast = useCallback((msg: string, kind: ToastKind = 'info', action?: ToastAction) => {
     const id = nextId.current++;
-    setToasts((t) => [...t, { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 9000 : 3500);
+    setToasts((t) => [...t, { id, msg, kind, action }]);
+    // A toast with a button stays long enough to use it.
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 15000 : kind === 'error' ? 9000 : 3500);
   }, []);
 
   const prompt = useCallback(
@@ -107,6 +115,17 @@ export function UIProvider({ children }: { children: ReactNode }) {
           <div key={t.id} className={`toast toast-${t.kind}`}>
             {t.kind === 'error' ? <AlertTriangle size={16} /> : t.kind === 'success' ? <CheckCircle2 size={16} /> : <Info size={16} />}
             <pre>{t.msg}</pre>
+            {t.action && (
+              <button
+                className="btn btn-xs btn-primary"
+                onClick={() => {
+                  setToasts((all) => all.filter((x) => x.id !== t.id));
+                  t.action!.onClick();
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
             <button className="icon-btn" onClick={() => setToasts((all) => all.filter((x) => x.id !== t.id))}>
               <X size={14} />
             </button>

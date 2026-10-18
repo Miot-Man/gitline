@@ -4,6 +4,7 @@ import { Pencil, Plus, Minus, ArrowRight, Copy as CopyIcon, AlertTriangle, Trash
 import type { Author, Commit, CommitDetails, FileChange, RepoInfo, Stash, Status } from '../types';
 import { git } from '../api';
 import { authorColor, formatDate, relativeTime, splitPath } from '../lib/format';
+import { isDeletion, kindLabel, type Sides } from '../lib/conflicts';
 import { Avatar } from './ui';
 
 export function StatusIcon({ status }: { status: string }) {
@@ -50,12 +51,14 @@ function FileRow({
   onClick,
   onContextMenu,
   action,
+  note,
 }: {
   file: FileChange;
   active: boolean;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   action?: React.ReactNode;
+  note?: string;
 }) {
   const { dir, name } = splitPath(file.path);
   const ref = useRef<HTMLDivElement>(null);
@@ -69,6 +72,7 @@ function FileRow({
         <span className="file-dir">{dir}</span>
         <span className="file-name">{name}</span>
       </span>
+      {note && <span className="file-kind">{note}</span>}
       {action && (
         <span className="file-action" onClick={(e) => e.stopPropagation()}>
           {action}
@@ -98,8 +102,12 @@ interface StagingProps {
   onDiscardAll: () => void;
   onFileMenu: (e: React.MouseEvent, f: FileChange, staged: boolean) => void;
   onCommit: () => void;
+  sides: Sides;
+  stashConflict: { ref: string; pop: boolean } | null; // a stash apply / pop that stopped on conflicts
   onResolve: (f: FileChange, side: 'ours' | 'theirs') => void;
   onMarkResolved: (f: FileChange) => void;
+  onKeep: (f: FileChange) => void;
+  onDelete: (f: FileChange) => void;
   onAbort: () => void;
   onContinue: () => void;
   onSkip: () => void;
@@ -120,7 +128,9 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 export function StagingPanel(p: StagingProps) {
-  const { status, info } = p;
+  const { status, info, sides } = p;
+  const conflicts = status.conflicted.length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const [showIgnored, setShowIgnored] = useState(false);
   const stepList = p.activeStaged === true ? status.staged : p.activeStaged === false ? [...status.conflicted, ...status.unstaged] : [];
   useFileStepper(stepList, p.activePath, (f) => p.onOpenDiff(f, p.activeStaged === true));
@@ -166,6 +176,12 @@ export function StagingPanel(p: StagingProps) {
           <div className="state-title">
             <AlertTriangle size={14} /> {STATE_LABEL[info.state]}
           </div>
+          {info.state === 'rebase' && info.opCommit && (
+            <div className="state-text" title={`${sides.theirs.title} onto ${sides.ours.title}`}>
+              Applying your commit <code>{info.opCommit.sha.slice(0, 7)}</code> {info.opCommit.subject}
+              {info.onto ? ` onto ${info.onto.name ?? info.onto.sha.slice(0, 7)}` : ''}.
+            </div>
+          )}
           <div className="state-text">
             {status.conflicted.length
               ? `Resolve ${status.conflicted.length} conflicted file${status.conflicted.length === 1 ? '' : 's'}, then continue.`
@@ -188,6 +204,21 @@ export function StagingPanel(p: StagingProps) {
           </div>
         </div>
       )}
+      {!info.state && conflicts > 0 && (
+        <div className="state-banner">
+          <div className="state-title">
+            <AlertTriangle size={14} />{' '}
+            {p.stashConflict
+              ? `${p.stashConflict.pop ? 'Popping' : 'Applying'} ${p.stashConflict.ref} hit conflicts`
+              : `${plural(conflicts, 'file')} ${conflicts === 1 ? 'has' : 'have'} conflicts`}
+          </div>
+          <div className="state-text">
+            {p.stashConflict
+              ? `Resolve ${plural(conflicts, 'conflicted file')}. Git kept the stash, so nothing is lost; its changes stay unstaged when you're done.`
+              : `Resolve ${conflicts === 1 ? 'it' : 'each one'}, then commit.`}
+          </div>
+        </div>
+      )}
 
       <div className="file-sections">
         {status.conflicted.length > 0 && (
@@ -203,18 +234,32 @@ export function StagingPanel(p: StagingProps) {
                   active={p.activePath === f.path}
                   onClick={() => p.onOpenDiff(f, false)}
                   onContextMenu={(e) => p.onFileMenu(e, f, false)}
+                  note={kindLabel(f.conflict, sides)}
                   action={
-                    <>
-                      <button className="btn btn-xs" title="Take our version" onClick={() => p.onResolve(f, 'ours')}>
-                        Ours
-                      </button>
-                      <button className="btn btn-xs" title="Take their version" onClick={() => p.onResolve(f, 'theirs')}>
-                        Theirs
-                      </button>
-                      <button className="btn btn-xs btn-primary" title="Mark as resolved (stage file)" onClick={() => p.onMarkResolved(f)}>
-                        Resolved
-                      </button>
-                    </>
+                    isDeletion(f.conflict) ? (
+                      <>
+                        {f.conflict !== 'both-deleted' && (
+                          <button className="btn btn-xs" title="Keep the file as it is now and mark it resolved" onClick={() => p.onKeep(f)}>
+                            Keep file
+                          </button>
+                        )}
+                        <button className="btn btn-xs" title="Delete the file and mark it resolved" onClick={() => p.onDelete(f)}>
+                          Delete file
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="btn btn-xs" title={`Take ${sides.ours.title} for the whole file`} onClick={() => p.onResolve(f, 'ours')}>
+                          {sides.ours.label}
+                        </button>
+                        <button className="btn btn-xs" title={`Take ${sides.theirs.title} for the whole file`} onClick={() => p.onResolve(f, 'theirs')}>
+                          {sides.theirs.label}
+                        </button>
+                        <button className="btn btn-xs btn-primary" title="Mark as resolved (stage file)" onClick={() => p.onMarkResolved(f)}>
+                          Resolved
+                        </button>
+                      </>
+                    )
                   }
                 />
               ))}
