@@ -93,6 +93,26 @@ impl Session {
         self.repo.path.file_name().map_or_else(|| self.repo.path.display().to_string(), |n| n.to_string_lossy().into_owned())
     }
 
+    /// The uncommitted-changes row's text, as the Electron app writes it: "3 uncommitted changes", and
+    /// the first few file names ("· a.rs, b.rs, c.rs +2 more").
+    pub fn wip_label(&self) -> (String, String) {
+        let st = &self.status;
+        let n = st.staged.len() + st.unstaged.len() + st.conflicted.len();
+        let label = format!("{n} uncommitted change{}", if n == 1 { "" } else { "s" });
+        let mut names: Vec<&str> = Vec::new();
+        for f in st.conflicted.iter().chain(&st.unstaged).chain(&st.staged) {
+            let name = crate::format::split_path(&f.path).1;
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let mut files = if names.is_empty() { String::new() } else { format!("· {}", names[..names.len().min(3)].join(", ")) };
+        if names.len() > 3 {
+            files.push_str(&format!(" +{} more", names.len() - 3));
+        }
+        (label, files)
+    }
+
     pub fn wip_shown(&self) -> bool {
         self.history.commits.first().is_some_and(|c| c.sha == WIP)
     }

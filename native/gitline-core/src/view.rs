@@ -310,6 +310,30 @@ pub fn pills(refs: &[&Ref], is_head_commit: bool, detached: bool) -> Vec<Pill> {
     out
 }
 
+/// How many files a commit modified, added, deleted and renamed (copies count as added), for the
+/// summary above a commit's file list.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FileCounts {
+    pub modified: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub renamed: usize,
+}
+
+pub fn file_counts(files: &[crate::types::FileChange]) -> FileCounts {
+    use crate::types::FileStatus::*;
+    let mut c = FileCounts::default();
+    for f in files {
+        match f.status {
+            Added | Copied | Untracked => c.added += 1,
+            Deleted => c.deleted += 1,
+            Renamed => c.renamed += 1,
+            _ => c.modified += 1,
+        }
+    }
+    c
+}
+
 /// The history list with its graph: an optional WIP row on top of the log, as the Electron app shows it.
 pub struct History {
     pub commits: Vec<Commit>,
@@ -347,6 +371,17 @@ impl History {
         let c = &self.commits[i];
         let refs: Vec<&Ref> = self.refs_by_sha.get(&c.sha).map(|v| v.iter().collect()).unwrap_or_default();
         pills(&refs, head == Some(c.sha.as_str()), detached)
+    }
+
+    /// The date column of row `i`: its day, shown only on the first commit of each day.
+    pub fn day(&self, i: usize, now: i64) -> Option<String> {
+        let c = &self.commits[i];
+        if c.sha == WIP {
+            return None;
+        }
+        let label = crate::format::day_label(c.time, now);
+        let prev = i.checked_sub(1).map(|p| &self.commits[p]).filter(|p| p.sha != WIP);
+        (prev.is_none_or(|p| crate::format::day_label(p.time, now) != label)).then_some(label)
     }
 
     pub fn cell(&self, i: usize, head: Option<&str>) -> GraphCell {
@@ -425,6 +460,14 @@ mod tests {
         assert_eq!(p.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), vec!["main", "origin/other", "v1"]);
         assert!(p[0].is_head && p[0].on_remote);
         assert_eq!(pills(&refs, true, true)[0].label, "HEAD");
+    }
+
+    #[test]
+    fn counts_files_by_kind() {
+        use crate::types::{FileChange, FileStatus};
+        let f = |s| FileChange::new("x", s);
+        let c = file_counts(&[f(FileStatus::Modified), f(FileStatus::Added), f(FileStatus::Copied), f(FileStatus::Renamed)]);
+        assert_eq!(c, FileCounts { modified: 1, added: 2, deleted: 0, renamed: 1 });
     }
 
     #[test]

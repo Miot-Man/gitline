@@ -1721,6 +1721,7 @@ dependencies = [
 name = "gitline-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "syntect",
  "tempfile",
  "two-face",

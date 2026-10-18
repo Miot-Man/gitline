@@ -23,6 +23,7 @@ fn opens_with_the_uncommitted_changes_selected() {
     assert!(s.wip_selected());
     assert_eq!(s.history.commits.len(), 2);
     assert_eq!(s.files(FileList::Unstaged).len(), 2);
+    assert_eq!(s.wip_label(), ("2 uncommitted changes".to_string(), "· f.rs, new.txt".to_string()));
     assert_eq!(
         s.history.pills(1, s.info.head.as_deref(), false).iter().map(|p| p.label.as_str()).collect::<Vec<_>>(),
         vec!["main", "feature"]

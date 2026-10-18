@@ -1,4 +1,5 @@
 // Display helpers, ported from src/lib/format.ts.
+use chrono::{Datelike, Local, TimeZone};
 
 pub fn initials(name: &str) -> String {
     let parts: Vec<&str> = name.split_whitespace().collect();
@@ -26,22 +27,44 @@ pub fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
-/// `2024-03-05 14:07 UTC`. (The Electron app uses the locale's format and time zone; a time zone
-/// database is more than the spike needs.)
+/// `5 Mar 2024, 14:07` in the local time zone, like the Electron app's formatDate in an English locale.
 pub fn format_date(unix: i64) -> String {
-    let days = unix.div_euclid(86_400);
-    let secs = unix.rem_euclid(86_400);
-    // Civil-from-days (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02} UTC", secs / 3600, secs % 3600 / 60)
+    format_date_in(unix, &Local)
+}
+
+pub fn format_date_in<Tz: TimeZone>(unix: i64, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    match tz.timestamp_opt(unix, 0).single() {
+        Some(d) => d.format("%-d %b %Y, %H:%M").to_string(),
+        None => String::new(),
+    }
+}
+
+/// The graph's date column: "Today", "Yesterday", a weekday within the week, else "18 Oct" (with the
+/// year when it isn't this year). Ported from dayLabel in src/lib/format.ts.
+pub fn day_label(unix: i64, now: i64) -> String {
+    day_label_in(unix, now, &Local)
+}
+
+pub fn day_label_in<Tz: TimeZone>(unix: i64, now: i64, tz: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let (Some(d), Some(n)) = (tz.timestamp_opt(unix, 0).single(), tz.timestamp_opt(now, 0).single()) else { return String::new() };
+    let days = (n.date_naive() - d.date_naive()).num_days();
+    if days <= 0 {
+        "Today".into()
+    } else if days == 1 {
+        "Yesterday".into()
+    } else if days < 7 {
+        d.format("%A").to_string()
+    } else if d.year() != n.year() {
+        d.format("%-d %b %Y").to_string()
+    } else {
+        d.format("%-d %b").to_string()
+    }
 }
 
 /// `("src/lib/", "graph.ts")`
@@ -99,10 +122,22 @@ mod tests {
     }
 
     #[test]
-    fn formats_dates_in_utc() {
-        assert_eq!(format_date(0), "1970-01-01 00:00 UTC");
-        assert_eq!(format_date(1_709_647_620), "2024-03-05 14:07 UTC");
-        assert_eq!(format_date(951_782_400), "2000-02-29 00:00 UTC");
+    fn formats_dates() {
+        assert_eq!(format_date_in(0, &chrono::Utc), "1 Jan 1970, 00:00");
+        assert_eq!(format_date_in(1_709_647_620, &chrono::Utc), "5 Mar 2024, 14:07");
+        let plus_two = chrono::FixedOffset::east_opt(2 * 3600).unwrap();
+        assert_eq!(format_date_in(1_709_647_620, &plus_two), "5 Mar 2024, 16:07");
+    }
+
+    #[test]
+    fn labels_days() {
+        let utc = &chrono::Utc;
+        let now = 1_709_647_620; // Tue 5 Mar 2024, 14:07
+        assert_eq!(day_label_in(now - 3600, now, utc), "Today");
+        assert_eq!(day_label_in(now - 86_400, now, utc), "Yesterday");
+        assert_eq!(day_label_in(now - 3 * 86_400, now, utc), "Saturday");
+        assert_eq!(day_label_in(now - 20 * 86_400, now, utc), "14 Feb");
+        assert_eq!(day_label_in(now - 400 * 86_400, now, utc), "30 Jan 2023");
     }
 
     #[test]
