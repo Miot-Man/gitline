@@ -2,7 +2,8 @@
 
 A brief for making Gitline's conflict resolution safe and complete. The everyday case works: a text
 conflict from a merge or cherry-pick, resolved in the conflict editor. Testing found cases where the app
-**loses work** or **gets stuck**. Fix those first (part 1), then improve the editor (part 2).
+**loses work** or **gets stuck**. Fix those first (part 1), then improve the editor (part 2). **Both parts
+are required.**
 
 ## Ground rules
 
@@ -150,7 +151,8 @@ column.
 
 ## Part 2: editor improvements
 
-Start only once part 1 is done and passing.
+Required, but do it after part 1 is done and passing, as separate commits, so the correctness fixes can be
+reviewed on their own.
 
 - **Context:** show 3 unchanged lines above and below each conflict card, from the text around it.
 - **Line numbers:** show line numbers in the cards, matching the result file.
@@ -163,7 +165,7 @@ Start only once part 1 is done and passing.
 
 ## Tests
 
-Add tests for each part 1 fix. Model them on the "merge conflicts" tests in `tests/git-ops.test.ts`
+Add tests for every fix in both parts. Model them on the "merge conflicts" tests in `tests/git-ops.test.ts`
 (real git in temporary repos) and the conflict test in `e2e/app.spec.ts`.
 
 - **git tests (`tests/git-ops.test.ts`):**
@@ -175,6 +177,8 @@ Add tests for each part 1 fix. Model them on the "merge conflicts" tests in `tes
   - After a stash pop conflict, resolving leaves the changes unstaged.
 - **Parser tests (`tests/lib.test.ts`):** `zdiff3` output; a file whose content has a line of exactly
   `=======` outside any conflict.
+- **Part 2:** an end-to-end check that conflict cards show context lines, line numbers, highlighting and
+  word-level differences, and that next / previous moves between conflicts.
 - **End-to-end tests (`e2e/app.spec.ts`), at 960×640:**
   - Rebase conflict: the buttons are labelled "Your commit" / "Upstream", and choosing your commit keeps
     your change after Continue.
@@ -185,9 +189,9 @@ Add tests for each part 1 fix. Model them on the "merge conflicts" tests in `tes
 
 ## What to hand back
 
-- A PR with part 1 (and part 2 if done), with all checks passing.
+- A PR with both parts, with all checks passing.
 - In the PR description:
   - each problem and how it's fixed;
   - screenshots of the conflict editor and the conflicted file list at 960×640, including a rebase
     conflict and a deletion conflict;
-  - anything left out and why.
+  - anything that couldn't be done and why.
