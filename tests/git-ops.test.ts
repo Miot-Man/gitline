@@ -228,6 +228,29 @@ describe('remotes and teammates', () => {
     const refs = await ops.refs(me);
     expect(refs.find((r: { name: string }) => r.name === 'feature').track).toBe('gone');
   });
+
+  it('still fetches when a local tag differs from the remote one', async () => {
+    const root = tmpDir();
+    const origin = path.join(root, 'origin.git');
+    sh(root, 'init', '-q', '--bare', origin);
+    const me = path.join(root, 'me');
+    const mate = path.join(root, 'mate');
+    sh(root, 'clone', '-q', origin, me);
+    write(me, 'a', '1\n');
+    await commitAll(me, 'init');
+    sh(me, 'push', '-q', '-u', 'origin', 'main');
+    sh(me, 'tag', 'v1');
+    sh(root, 'clone', '-q', origin, mate);
+    write(mate, 'a', '2\n');
+    await commitAll(mate, 'release');
+    sh(mate, 'tag', 'v1');
+    sh(mate, 'checkout', '-q', '-b', 'feature');
+    sh(mate, 'push', '-q', 'origin', 'feature', 'v1');
+
+    await ops.fetch(me);
+    expect(sh(me, 'rev-parse', 'origin/feature')).toBe(sh(mate, 'rev-parse', 'feature'));
+    expect(sh(me, 'rev-parse', 'v1')).toBe(sh(me, 'rev-parse', 'main'));
+  });
 });
 
 describe('merge conflicts', () => {

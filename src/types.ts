@@ -132,6 +132,7 @@ export interface PullRequest {
   number: number;
   title: string;
   head: string;
+  sha: string; // the PR branch's tip on GitHub
   base: string;
   author: string;
   url: string;

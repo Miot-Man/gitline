@@ -436,7 +436,10 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     if (command.name === 'undo' || command.name === 'redo') applyHistory(command.name);
     if (command.name === 'view-history') showHistory();
     if (command.name === 'view-changes') showChanges();
-    if (command.name === 'view-prs') setSideFocus({ key: 'prs', n: Date.now() });
+    if (command.name === 'view-prs') {
+      setSideFocus({ key: 'prs', n: Date.now() });
+      if (prs.length === 1) selectPr(prs[0]);
+    }
     if (command.name === 'palette') setPaletteOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command]);
@@ -745,9 +748,13 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       checkoutMove(`Checkout pull request #${pr.number}`, b, a)
     );
 
-  const selectPr = (pr: PullRequest) => {
-    const r = refs.find((x) => x.type === 'local' && x.name === pr.head) ?? refs.find((x) => x.type === 'remote' && branchName(x) === pr.head);
-    if (r) selectSha(r.sha);
+  // Shows the PR's tip in the graph. A PR opened elsewhere (e.g. by a cloud session) may not be fetched yet, so fetch it first.
+  const selectPr = async (pr: PullRequest) => {
+    if (!commits.some((c) => c.sha === pr.sha)) {
+      if (pr.fork) return ui.toast(`#${pr.number} comes from a fork, so its branch isn't here. Double-click it to check it out.`, 'info');
+      if (!(await run(`Fetching ${pr.head}…`, () => git('fetch', path)))) return;
+    }
+    selectSha(pr.sha);
   };
 
   const prMenu = (e: React.MouseEvent, pr: PullRequest) =>
@@ -1466,6 +1473,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
           </div>
           <Sidebar
             focus={sideFocus}
+            selected={selected}
             refs={refs}
             stashes={stashes}
             remotes={info?.remotes ?? []}

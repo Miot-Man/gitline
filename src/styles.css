@@ -756,7 +756,27 @@ pre {
   padding-bottom: 20px;
 }
 .side-section {
+  position: relative;
   margin-bottom: 2px;
+}
+.side-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: side-flash 0.9s ease-out;
+}
+@keyframes side-flash {
+  from {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+.side-item.selected {
+  background: var(--bg-panel-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text-strong);
 }
 .side-header {
   display: flex;

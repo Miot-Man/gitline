@@ -10,6 +10,8 @@ interface Props {
   filter: GraphFilter;
   // Set by the rail to open and scroll to a section (e.g. pull requests).
   focus: { key: string; n: number } | null;
+  // The commit selected in the graph, to highlight the pull request it's the tip of.
+  selected: string | null;
   laneColors: Map<string, string>;
   prs: PullRequest[];
   gh: GhStatus | null;
@@ -73,6 +75,8 @@ export function Sidebar(props: Props) {
   const { refs, stashes, remotes } = props;
   const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Briefly highlights the section the rail asked for, so the click shows even when it's already in view.
+  const [flash, setFlash] = useState<{ key: string; n: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +87,7 @@ export function Sidebar(props: Props) {
       n.delete(key);
       return n;
     });
+    setFlash(props.focus);
     requestAnimationFrame(() => scrollRef.current?.querySelector(`[data-section="${key}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.focus]);
@@ -125,6 +130,7 @@ export function Sidebar(props: Props) {
     const open = !collapsed.has(key);
     return (
       <div className="side-section" data-section={key}>
+        {flash?.key === key && <div key={flash.n} className="side-flash" onAnimationEnd={() => setFlash(null)} />}
         <div className="side-header" onClick={() => toggle(key)}>
           {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           <span>{title}</span>
@@ -172,7 +178,7 @@ export function Sidebar(props: Props) {
                 prs.map((pr) => (
                   <div
                     key={pr.number}
-                    className="side-item pr-item"
+                    className={`side-item pr-item${pr.sha === props.selected ? ' selected' : ''}`}
                     style={{ paddingLeft: 24 }}
                     onClick={() => props.onPrClick(pr)}
                     onDoubleClick={() => props.onPrDoubleClick(pr)}

@@ -801,12 +801,13 @@ const ops = {
     }
   },
   async ghPrs(cwd) {
-    const fields = 'number,title,headRefName,baseRefName,author,url,isDraft,reviewDecision,statusCheckRollup,isCrossRepository';
+    const fields = 'number,title,headRefName,headRefOid,baseRefName,author,url,isDraft,reviewDecision,statusCheckRollup,isCrossRepository';
     const out = await gh(cwd, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', fields]);
     return JSON.parse(out).map((p) => ({
       number: p.number,
       title: p.title,
       head: p.headRefName,
+      sha: p.headRefOid,
       base: p.baseRefName,
       author: p.author?.login ?? '',
       url: p.url,
@@ -887,7 +888,14 @@ const ops = {
     const snapshot = async () =>
       new Map(lines((await git(cwd, ['for-each-ref', '--format=%(refname)%1f%(objectname)', 'refs/remotes'])).stdout).map((l) => l.split(SEP)));
     const before = await snapshot();
-    await git(cwd, ['fetch', '--all', '--prune', '--tags']);
+    const r = await git(cwd, ['fetch', '--all', '--prune', '--tags'], { allowFail: true });
+    // A local tag that differs from the remote's ("would clobber existing tag") fails the whole fetch,
+    // though everything else was fetched. Keep the local tag rather than failing every fetch over it.
+    if (r.code !== 0) {
+      const rejected = lines(r.stderr).filter((l) => /^\s*!/.test(l));
+      if (!rejected.length || /^fatal:/m.test(r.stderr) || rejected.some((l) => !l.includes('would clobber existing tag')))
+        throw new Error((r.stderr || r.stdout).trim());
+    }
     const after = await snapshot();
     // First fetch of a fresh clone: everything is "new", which isn't news.
     if (!before.size) return [];
