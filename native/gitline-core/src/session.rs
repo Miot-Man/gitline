@@ -7,9 +7,8 @@ use crate::highlight::ThemeKind;
 use crate::types::*;
 use crate::view::{DiffView, History};
 
-/// The most commits the graph loads (the Electron app pages by 5,000; the spike loads them all at once
-/// to show the list stays smooth).
-pub const LOG_LIMIT: usize = 20_000;
+/// The graph loads commits in pages of this many, as the Electron app does ("Load more commits").
+pub const LOG_PAGE: usize = 5000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileList {
@@ -27,14 +26,17 @@ pub struct OpenDiff {
     pub view: Arc<DiffView>,
     /// False until the highlighted view from `highlight_job` arrives.
     pub highlighted: bool,
+    /// Whether whitespace-only changes are hidden in this diff.
+    pub ignore_ws: bool,
     text: String,
     generation: u64,
 }
 
 impl OpenDiff {
-    /// Whether hunks and lines can be staged (or unstaged) from this diff.
+    /// Whether hunks and lines can be staged (or unstaged) from this diff. Not when whitespace is
+    /// hidden: such a diff doesn't apply back to the file.
     pub fn can_apply(&self) -> bool {
-        self.list != FileList::Commit && self.file.status != FileStatus::Untracked && self.view.can_apply()
+        self.list != FileList::Commit && self.file.status != FileStatus::Untracked && !self.ignore_ws && self.view.can_apply()
     }
 }
 
@@ -63,7 +65,16 @@ pub struct Session {
     pub selected: usize,
     pub details: Option<CommitDetails>,
     pub diff: Option<OpenDiff>,
+    pub stashes: Vec<Stash>,
+    /// Ignored files, once asked for (they take a moment to list in big trees).
+    pub ignored: Option<Vec<String>>,
     pub theme: ThemeKind,
+    /// Hide whitespace-only changes in diffs (git diff -w). Such diffs can't be staged by hunk or line.
+    pub ignore_ws: bool,
+    /// Show diffs without syntax highlighting.
+    pub plain: bool,
+    /// How many commits the graph loads; grows by LOG_PAGE with `load_more`.
+    pub log_limit: usize,
     generation: u64,
 }
 
@@ -81,7 +92,12 @@ impl Session {
             selected: 0,
             details: None,
             diff: None,
+            stashes: Vec::new(),
+            ignored: None,
             theme: ThemeKind::Dark,
+            ignore_ws: false,
+            plain: false,
+            log_limit: LOG_PAGE,
             generation: 0,
         };
         s.reload()?;
@@ -113,6 +129,16 @@ impl Session {
         (label, files)
     }
 
+    /// Whether the log stopped at `log_limit`, so there may be more commits to load.
+    pub fn can_load_more(&self) -> bool {
+        self.history.commits.len() - usize::from(self.wip_shown()) >= self.log_limit
+    }
+
+    pub fn load_more(&mut self) -> Result<()> {
+        self.log_limit += LOG_PAGE;
+        self.reload()
+    }
+
     pub fn wip_shown(&self) -> bool {
         self.history.commits.first().is_some_and(|c| c.sha == WIP)
     }
@@ -126,8 +152,12 @@ impl Session {
         let selected_sha = self.history.commits.get(self.selected).map(|c| c.sha.clone());
         self.info = self.repo.info()?;
         self.status = self.repo.status()?;
-        let commits = self.repo.log(LOG_LIMIT, &GraphFilter::default())?;
+        let commits = self.repo.log(self.log_limit, &GraphFilter::default())?;
         let refs = self.repo.refs()?;
+        self.stashes = self.repo.stashes()?;
+        if self.ignored.is_some() {
+            self.ignored = Some(self.repo.ignored_files()?);
+        }
         // The default branch keeps the leftmost lane of the graph.
         let trunk = ["main", "master", "origin/main", "origin/master"]
             .iter()
@@ -164,7 +194,7 @@ impl Session {
         let (text, sha) = match list {
             FileList::Commit => {
                 let sha = self.details.as_ref().map(|d| d.sha.clone()).unwrap_or_default();
-                (self.repo.diff_commit(&sha, &file.path, file.old_path.as_deref(), None, false)?, Some(sha))
+                (self.repo.diff_commit(&sha, &file.path, file.old_path.as_deref(), None, self.ignore_ws)?, Some(sha))
             }
             _ => (
                 self.repo.diff_working(
@@ -172,7 +202,7 @@ impl Session {
                     list == FileList::Staged,
                     file.status == FileStatus::Untracked,
                     file.old_path.as_deref(),
-                    false,
+                    self.ignore_ws,
                 )?,
                 None,
             ),
@@ -184,9 +214,37 @@ impl Session {
             sha,
             view: Arc::new(DiffView::build_plain(&text)),
             highlighted: false,
+            ignore_ws: self.ignore_ws,
             text,
             generation: self.generation,
         });
+        Ok(())
+    }
+
+    /// Reopens the open diff with whitespace-only changes hidden or shown.
+    pub fn set_ignore_ws(&mut self, on: bool) -> Result<()> {
+        self.ignore_ws = on;
+        self.reopen_diff()
+    }
+
+    /// Reopens the open diff with or without syntax highlighting.
+    pub fn set_plain(&mut self, on: bool) -> Result<()> {
+        self.plain = on;
+        self.reopen_diff()
+    }
+
+    fn reopen_diff(&mut self) -> Result<()> {
+        let Some(d) = self.diff.as_ref() else { return Ok(()) };
+        let (list, path) = (d.list, d.file.path.clone());
+        match self.files(list).iter().position(|f| f.path == path) {
+            Some(i) => self.open_file(list, i),
+            None => Ok(()),
+        }
+    }
+
+    /// Lists the ignored files (kept up to date by `reload` from then on).
+    pub fn load_ignored(&mut self) -> Result<()> {
+        self.ignored = Some(self.repo.ignored_files()?);
         Ok(())
     }
 
@@ -197,7 +255,9 @@ impl Session {
     /// The highlighting still to do for the open diff, if any.
     pub fn highlight_job(&self) -> Option<HighlightJob> {
         let d = self.diff.as_ref().filter(|d| !d.highlighted)?;
-        Some(HighlightJob { generation: d.generation, text: d.text.clone(), path: d.file.path.clone(), theme: self.theme })
+        // An empty path picks no syntax: plain text.
+        let path = if self.plain { String::new() } else { d.file.path.clone() };
+        Some(HighlightJob { generation: d.generation, text: d.text.clone(), path, theme: self.theme })
     }
 
     /// Takes a finished highlight. Returns false (and drops it) if another diff was opened since.
@@ -288,12 +348,18 @@ impl Session {
         self.reload()
     }
 
-    pub fn can_commit(&self, summary: &str) -> bool {
-        !summary.trim().is_empty() && !self.status.staged.is_empty()
+    /// Amending can rewrite just the message, so it doesn't need staged files.
+    pub fn can_commit(&self, summary: &str, amend: bool) -> bool {
+        !summary.trim().is_empty() && (amend || !self.status.staged.is_empty())
     }
 
-    pub fn commit(&mut self, summary: &str, description: &str) -> Result<()> {
-        self.repo.commit(summary.trim(), description, false)?;
+    /// The last commit's message, to fill the commit box when Amend is ticked.
+    pub fn last_message(&self) -> Result<String> {
+        Ok(self.repo.git(&["log", "-1", "--format=%B"])?.stdout.trim_end().to_string())
+    }
+
+    pub fn commit(&mut self, summary: &str, description: &str, amend: bool) -> Result<()> {
+        self.repo.commit(summary.trim(), description, amend)?;
         self.diff = None;
         self.reload()?;
         self.select(self.selected)

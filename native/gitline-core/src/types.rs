@@ -34,6 +34,15 @@ pub struct Ref {
     pub is_head: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stash {
+    /// `stash@{0}`
+    pub r#ref: String,
+    pub sha: String,
+    pub message: String,
+    pub index: usize,
+}
+
 /// One letter of `git status` / `--name-status`: M A D R C U ? T.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FileStatus {

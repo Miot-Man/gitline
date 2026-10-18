@@ -4,7 +4,7 @@ use std::path::Path;
 
 use gitline_core::Repo;
 use gitline_core::session::FileList;
-use gitline_iced::{App, Highlighting, Message, style};
+use gitline_iced::{App, Highlighting, Message, ToastKind, style};
 use iced_test::Simulator;
 use iced_test::core::Size;
 
@@ -39,6 +39,10 @@ fn fixture(dir: &Path) -> Repo {
     r
 }
 
+fn read_file(dir: &Path, file: &str) -> String {
+    std::fs::read_to_string(dir.join(file)).unwrap()
+}
+
 fn ui(app: &App) -> Simulator<'_, Message> {
     Simulator::with_size(style::settings(), Size::new(960.0, 640.0), app.view())
 }
@@ -64,6 +68,10 @@ fn assert_on_screen(app: &App, label: &str) {
     assert!(b.x >= 0.0 && b.y >= 0.0 && b.x + b.width <= 960.5 && b.y + b.height <= 640.5, "{label:?} at {b:?} is off screen");
 }
 
+fn toasts(app: &App) -> Vec<(ToastKind, String)> {
+    app.toasts.iter().map(|(_, k, m)| (*k, m.clone())).collect()
+}
+
 #[test]
 fn stages_hunks_and_lines_and_commits_at_the_minimum_size() {
     let dir = tempfile::tempdir().unwrap();
@@ -71,15 +79,27 @@ fn stages_hunks_and_lines_and_commits_at_the_minimum_size() {
     let mut app = App::open(isolated(dir.path()), Highlighting::Inline).unwrap();
 
     assert!(app.session.wip_selected());
-    for label in ["Uncommitted changes · 2 unstaged", "Say hi", "Side work", "main", "Stage all", "Stage files to commit", "notes.txt"] {
+    for label in [
+        "2 uncommitted changes",
+        "Say hi",
+        "Side work",
+        "Branches",
+        "Stage all changes",
+        "Stage changes to commit",
+        "notes.txt",
+        "Not fetched yet",
+        "Commit",
+        "Amend",
+    ] {
         assert_on_screen(&app, label);
     }
 
     // Open notes.txt and stage its second hunk.
     click(&mut app, "notes.txt");
     assert!(app.session.diff.as_ref().is_some_and(|d| d.can_apply() && d.highlighted));
-    assert_on_screen(&app, "Stage file");
-    assert_on_screen(&app, "Plain text");
+    for label in ["Stage File", "Discard File", "UNSTAGED", "Uncommitted changes", "Stage Hunk"] {
+        assert_on_screen(&app, label);
+    }
     let rows = app.session.diff.as_ref().unwrap().view.rows.clone();
     let second_hunk = rows.iter().rposition(|r| r.line.is_none()).unwrap();
     let _ = app.update(Message::ApplyHunk(rows[second_hunk].hunk));
@@ -87,41 +107,71 @@ fn stages_hunks_and_lines_and_commits_at_the_minimum_size() {
     assert_eq!(app.session.status.staged.len(), 1);
     assert!(app.session.diff.is_some(), "the diff stays open on the rest of the file");
 
-    // Select from the end of "line 2" into "line two" in the text, then stage the lines it touches.
+    // Select from "line 2" into "line two" in the text: the hunk's header offers to stage those lines.
     let rows = app.session.diff.as_ref().unwrap().view.rows.clone();
     let add = rows.iter().position(|r| r.text == "line two").unwrap();
     app.select_diff_rows(add - 1, add);
     assert_on_screen(&app, "Stage 2 lines");
-    assert_on_screen(&app, "Copy");
+    assert_on_screen(&app, "Discard 2 lines");
+    click(&mut app, "Clear");
+    assert!(!iced_test::Simulator::with_size(style::settings(), Size::new(960.0, 640.0), app.view()).find("Stage 2 lines").is_ok());
     app.select_diff_rows(add, add);
     click(&mut app, "Stage 1 line");
     let staged = git(&repo, &["show", ":notes.txt"]);
     assert!(staged.contains("line 2\nline two\nline 3"), "{staged}");
 
-    click(&mut app, "Close");
+    // Buttons for features beyond the spike say so.
+    click(&mut app, "Discard File");
+    assert_eq!(toasts(&app).last().unwrap(), &(ToastKind::Info, "Discarding a file isn't in the native spike yet.".to_string()));
+    assert!(read_file(dir.path(), "notes.txt").contains("line twenty-eight"), "nothing was discarded");
+
+    let _ = app.update(Message::Key(iced::keyboard::key::Named::Escape));
     assert!(app.session.diff.is_none());
 
     // Stage the new file, then commit through the commit box.
     let i = app.session.files(FileList::Unstaged).iter().position(|f| f.path == "new.txt").unwrap();
     let _ = app.update(Message::StageFile(i));
     let _ = app.update(Message::Summary("Update notes".into()));
-    click(&mut app, "Commit 2 files");
-    assert!(!app.status_error, "{}", app.status);
+    click(&mut app, "Commit changes to 2 files");
+    assert!(toasts(&app).iter().all(|t| t.0 != ToastKind::Error), "{:?}", toasts(&app));
     assert_eq!(git(&repo, &["log", "-1", "--format=%B"]), "Update notes");
     assert!(app.summary.is_empty());
 
     // Select a commit: its details and files replace the staging panel.
     click(&mut app, "Say hi");
     assert!(!app.session.wip_selected());
-    assert_on_screen(&app, "With a body.");
+    for label in ["With a body.", "commit:", "1 modified", "Test User"] {
+        assert_on_screen(&app, label);
+    }
     click(&mut app, "main.rs");
     let d = app.session.diff.as_ref().unwrap();
     assert!(!d.can_apply());
-    assert_on_screen(&app, "Rust");
+    assert!(d.highlighted && d.view.rows.iter().any(|r| r.spans.iter().any(|sp| sp.style.color.is_some())), "Rust is highlighted");
 }
 
 #[test]
-fn copies_the_selected_text() {
+fn jumps_to_branches_from_the_sidebar_and_amends() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = fixture(dir.path());
+    let mut app = App::open(isolated(dir.path()), Highlighting::Inline).unwrap();
+    click(&mut app, "side");
+    let c = &app.session.history.commits[app.session.selected];
+    assert_eq!(c.subject, "Side work");
+
+    // Ticking Amend fills in the last message; amending rewrites it.
+    let _ = app.update(Message::ShowChanges);
+    let _ = app.update(Message::Amend(true));
+    assert_eq!(app.summary, "Say hi");
+    assert_eq!(app.description.text().trim(), "With a body.");
+    assert_on_screen(&app, "Amend previous commit");
+    let _ = app.update(Message::Summary("Say hello".into()));
+    let _ = app.update(Message::Commit);
+    assert_eq!(git(&repo, &["log", "-1", "--format=%s"]), "Say hello");
+    assert_eq!(git(&repo, &["rev-list", "--count", "HEAD"]), "2");
+}
+
+#[test]
+fn selects_text_across_lines() {
     let dir = tempfile::tempdir().unwrap();
     fixture(dir.path());
     let mut app = App::open(isolated(dir.path()), Highlighting::Inline).unwrap();
@@ -130,12 +180,10 @@ fn copies_the_selected_text() {
     let add = rows.iter().position(|r| r.text == "line two").unwrap();
     app.select_diff_rows(add - 1, add);
     assert_eq!(app.diff_content.selection().as_deref(), Some("line 2\nline two"));
-    let _ = app.update(Message::Copy);
-    assert_eq!(app.status, "Copied 2 lines");
 }
 
 #[test]
-fn reports_errors_in_the_status_bar() {
+fn reports_errors_in_a_toast() {
     let dir = tempfile::tempdir().unwrap();
     let repo = fixture(dir.path());
     let mut app = App::open(isolated(dir.path()), Highlighting::Inline).unwrap();
@@ -143,8 +191,9 @@ fn reports_errors_in_the_status_bar() {
     std::fs::write(dir.path().join("notes.txt"), "rewritten\n").unwrap();
     git(&repo, &["add", "notes.txt"]);
     let _ = app.update(Message::ApplyHunk(0));
-    assert!(app.status_error);
-    assert_on_screen(&app, &app.status.clone());
+    let errors: Vec<_> = toasts(&app).into_iter().filter(|t| t.0 == ToastKind::Error).collect();
+    assert_eq!(errors.len(), 1);
+    assert_on_screen(&app, &errors[0].1.clone());
 }
 
 #[test]

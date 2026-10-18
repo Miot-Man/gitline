@@ -10,6 +10,7 @@ fn main() -> iced::Result {
     }
     iced::application(move || App::open(repo.clone(), Highlighting::Background).expect("opened above"), App::update, App::view)
         .title(App::title)
+        .subscription(App::subscription)
         .theme(|_: &App| style::theme())
         .settings(style::settings())
         .window(iced::window::Settings {

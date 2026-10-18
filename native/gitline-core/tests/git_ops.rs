@@ -381,3 +381,31 @@ fn errors_outside_a_repository() {
     assert!(d.info().is_err());
     assert!(d.status().is_err());
 }
+
+#[test]
+fn lists_ignored_folders_once() {
+    let r = tmp_repo();
+    write(&r, ".gitignore", "build/\n*.log\n");
+    write(&r, "build/a/b.bin", "x");
+    write(&r, "build/c.bin", "x");
+    write(&r, "run.log", "x");
+    let mut ignored = r.ignored_files().unwrap();
+    ignored.sort();
+    assert_eq!(ignored, vec!["build/", "run.log"]);
+}
+
+#[test]
+fn lists_stashes() {
+    let r = tmp_repo();
+    write(&r, "a", "1\n");
+    commit_all(&r, "init");
+    assert!(r.stashes().unwrap().is_empty());
+    write(&r, "a", "2\n");
+    sh(&r, &["stash", "push", "-q", "-m", "first"]);
+    write(&r, "a", "3\n");
+    sh(&r, &["stash", "push", "-q", "-m", "second"]);
+    let s = r.stashes().unwrap();
+    assert_eq!(s.iter().map(|x| (x.r#ref.as_str(), x.index)).collect::<Vec<_>>(), vec![("stash@{0}", 0), ("stash@{1}", 1)]);
+    assert!(s[0].message.ends_with("second"), "{}", s[0].message);
+    assert_eq!(s[0].sha, sh(&r, &["rev-parse", "stash@{0}"]));
+}

@@ -384,6 +384,12 @@ impl History {
         (prev.is_none_or(|p| crate::format::day_label(p.time, now) != label)).then_some(label)
     }
 
+    /// The colour of row `i`'s lane (for the sidebar's branch dots), as 0xRRGGBB.
+    pub fn lane_color(&self, i: usize) -> u32 {
+        let r = &self.graph.rows[i];
+        lane_color(r.after_colors.get(r.col).or(r.before_colors.get(r.col)).copied().unwrap_or(r.col))
+    }
+
     pub fn cell(&self, i: usize, head: Option<&str>) -> GraphCell {
         let c = &self.commits[i];
         graph_cell(&self.graph.rows[i], c.parents.len(), head == Some(c.sha.as_str()), c.sha == WIP)

@@ -327,6 +327,19 @@ impl Repo {
             .collect())
     }
 
+    pub fn stashes(&self) -> Result<Vec<Stash>> {
+        let r = self.git_allow_fail(&["stash", "list", "--format=%gd%x1f%H%x1f%s"])?;
+        Ok(lines(&r.stdout)
+            .map(|l| {
+                let f: Vec<&str> = l.split(SEP).collect();
+                let get = |i: usize| f.get(i).copied().unwrap_or("");
+                let r#ref = get(0).to_string();
+                let index = r#ref.split_once('{').and_then(|(_, n)| n.trim_end_matches('}').parse().ok()).unwrap_or(0);
+                Stash { r#ref, sha: get(1).to_string(), message: get(2).to_string(), index }
+            })
+            .collect())
+    }
+
     pub fn commit_details(&self, sha: &str) -> Result<CommitDetails> {
         let r = self.git(&["show", "-s", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%B", sha])?;
         let f: Vec<&str> = r.stdout.splitn(9, SEP).collect();
@@ -389,6 +402,12 @@ impl Repo {
             }
         }
         Ok(s)
+    }
+
+    /// Ignored files; an ignored folder is listed once (`build/`) instead of every file inside it.
+    pub fn ignored_files(&self) -> Result<Vec<String>> {
+        let r = self.git(&["status", "--porcelain=v1", "-z", "--ignored=traditional", "-unormal"])?;
+        Ok(r.stdout.split('\0').filter_map(|e| e.strip_prefix("!! ")).map(str::to_string).collect())
     }
 
     /// The diff of one file in the work tree (or the index, when `staged`). `ignore_ws` hides
