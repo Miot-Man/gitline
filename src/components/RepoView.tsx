@@ -25,7 +25,7 @@ import type {
 import { WIP } from '../types';
 import { api, basename, cleanError, git, joinPath } from '../api';
 import { computeGraph, laneColor } from '../lib/graph';
-import { parseTrack } from '../lib/format';
+import { ignoreLiteral, parseTrack } from '../lib/format';
 import { Splitter, useUI, type MenuItem } from './ui';
 import { Toolbar, PULL_LABELS, type Crumb, type PullMode } from './Toolbar';
 import { Sidebar } from './Sidebar';
@@ -1400,8 +1400,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     if (f.status !== 'U') items.push({ label: 'Stash changes to this file', onClick: () => run('Stashing…', () => git('stash', path, `Changes to ${f.path}`, [f.path]), `Stashed ${f.path}`) });
     items.push('sep');
     if (f.status === '?') {
-      items.push({ label: 'Ignore this file', onClick: () => run('Updating .gitignore…', () => git('ignore', path, `/${f.path}`)) });
-      if (ext) items.push({ label: `Ignore all *${ext} files`, onClick: () => run('Updating .gitignore…', () => git('ignore', path, `*${ext}`)) });
+      items.push({ label: 'Ignore this file', onClick: () => run('Updating .gitignore…', () => git('ignore', path, `/${ignoreLiteral(f.path)}`)) });
+      if (ext) items.push({ label: `Ignore all *${ext} files`, onClick: () => run('Updating .gitignore…', () => git('ignore', path, `*${ignoreLiteral(ext)}`)) });
       items.push('sep');
     }
     if (f.status !== '?' && f.status !== 'A') {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildLinePatch, parseDiff } from '../src/lib/diff';
+import { ignoreLiteral } from '../src/lib/format';
 import { headMove, type UndoEntry } from '../src/lib/undo';
 import { cleanup, commitAll, ops, read, sh, subjects, tmpDir, tmpRepo, write } from './helpers';
 
@@ -599,6 +600,47 @@ describe('identity per folder', () => {
 });
 
 describe('partial stash and recovery', () => {
+  it('keeps a file untracked through a stash and pop', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'keep.txt', '1\n');
+    write(dir, 'secret.env', 'key\n');
+    write(dir, 'local.cfg', 'mine\n');
+    write(dir, 'gone.txt', 'old\n');
+    await commitAll(dir, 'init');
+    // One untracked and ignored (so the stash leaves it on disk), one just untracked, one really deleted.
+    sh(dir, 'rm', '--cached', '-q', 'secret.env', 'local.cfg');
+    sh(dir, 'rm', '-q', 'gone.txt');
+    await ops.ignore(dir, '/secret.env');
+    write(dir, 'keep.txt', '2\n');
+    await ops.stash(dir, 'wip');
+    expect(sh(dir, 'ls-files', 'secret.env', 'local.cfg')).toBe('local.cfg\nsecret.env');
+    await ops.stashPop(dir);
+    expect(sh(dir, 'ls-files', 'secret.env', 'local.cfg', 'gone.txt')).toBe('gone.txt');
+    expect(read(dir, 'secret.env')).toBe('key\n');
+    expect(read(dir, 'local.cfg')).toBe('mine\n');
+    expect(fs.existsSync(path.join(dir, 'gone.txt'))).toBe(false);
+    expect(read(dir, 'keep.txt')).toBe('2\n');
+    expect((await ops.status(dir)).staged.map((f: { path: string }) => f.path).sort()).toEqual(['local.cfg', 'secret.env']);
+  });
+
+  it("won't stash a file on its own while it's being untracked", async () => {
+    const dir = await tmpRepo();
+    write(dir, 'secret.env', 'key\n');
+    await commitAll(dir, 'init');
+    sh(dir, 'rm', '--cached', '-q', 'secret.env');
+    await expect(ops.stash(dir, 'just it', ['secret.env'])).rejects.toThrow(/being untracked/);
+    expect(await ops.stashes(dir)).toEqual([]);
+    expect((await ops.status(dir)).staged).toEqual([{ path: 'secret.env', status: 'D', oldPath: undefined }]);
+  });
+
+  it('ignores a file whose name has glob characters', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'a[1].txt', 'x\n');
+    write(dir, 'a1.txt', 'x\n');
+    await ops.ignore(dir, `/${ignoreLiteral('a[1].txt')}`);
+    expect((await ops.status(dir)).unstaged.map((f: { path: string }) => f.path).sort()).toEqual(['.gitignore', 'a1.txt']);
+  });
+
   it('stashes one file or only staged changes, and finds lost commits', async () => {
     const dir = await tmpRepo();
     write(dir, 'a', '1\n');

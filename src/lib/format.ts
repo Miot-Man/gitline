@@ -56,3 +56,8 @@ export function dayLabel(unix: number, now = new Date()) {
   if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
 }
+
+// A .gitignore pattern matching exactly this text: glob characters and trailing spaces are taken literally.
+export function ignoreLiteral(text: string) {
+  return text.replace(/[\\[*?]/g, '\\$&').replace(/ +$/, (s) => s.replace(/ /g, '\\ '));
+}

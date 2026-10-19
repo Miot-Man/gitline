@@ -145,6 +145,32 @@ async function conflictAware(cwd, args, env) {
   throw new Error(text.trim());
 }
 
+// Applies or pops a stash, keeping files that were being untracked (deleted from the index, kept on disk)
+// untracked. Without --index, which would restage everything, git brings them back tracked.
+async function applyStash(cwd, args, ref) {
+  const sha = (await git(cwd, ['rev-parse', '--verify', '-q', ref || 'refs/stash'], { allowFail: true })).stdout.trim();
+  if (!sha) return conflictAware(cwd, args); // let git report the missing stash
+  const names = async (cmd) => (await git(cwd, cmd, { allowFail: true })).stdout.split('\0').filter(Boolean);
+  const literal = { env: { GIT_LITERAL_PATHSPECS: '1' } };
+  const deleted = await names(['diff', '-z', '--name-only', '--no-renames', '--diff-filter=D', `${sha}^1`, `${sha}^2`]);
+  // The stash keeps an untracked copy of those that weren't ignored, which git won't restore over the tracked
+  // file the stash put back. Clear that file out of the way first if it's unchanged, since HEAD has it.
+  const saved = new Set(await names(['ls-tree', '-r', '-z', '--name-only', `${sha}^3`]));
+  const cleared = [];
+  for (const f of deleted.filter((f) => saved.has(f))) if ((await git(cwd, ['rm', '-q', '--', f], { ...literal, allowFail: true })).code === 0) cleared.push(f);
+  let r;
+  try {
+    r = await conflictAware(cwd, args);
+  } catch (e) {
+    if (cleared.length) await git(cwd, ['checkout', '-q', 'HEAD', '--', ...cleared], { ...literal, allowFail: true });
+    throw e;
+  }
+  // A real deletion leaves no file behind; an untracked one is restored from the stash, or never left if ignored.
+  const untracking = r.conflict ? [] : deleted.filter((f) => fs.existsSync(repoFile(cwd, f)));
+  if (untracking.length) await git(cwd, ['rm', '--cached', '-q', '--ignore-unmatch', '--', ...untracking], literal);
+  return r;
+}
+
 const exists = (...p) => fs.existsSync(path.join(...p));
 // Quotes a path for git's sh (Git for Windows ships one too, which prefers forward slashes).
 const shellQuote = (s) => `'${s.replace(/\\/g, '/').replace(/'/g, `'\\''`)}'`;
@@ -1058,11 +1084,18 @@ const ops = {
   // `paths` stashes just those files; `stagedOnly` stashes just what's in the index.
   async stash(cwd, message, paths, stagedOnly) {
     const m = message ? ['-m', message] : [];
+    // git can't stash a file by path while it's being untracked (deleted from the index but still on disk):
+    // it saves the stash, then fails to take the change out, leaving a stash that won't pop back.
+    if (paths?.length && !stagedOnly) {
+      const { staged } = await ops.status(cwd);
+      const untracking = paths.filter((p) => staged.some((f) => f.path === p && f.status === 'D') && fs.existsSync(repoFile(cwd, p)));
+      if (untracking.length) throw new Error(`Can't stash ${untracking[0]} on its own while it's being untracked. Stash all changes instead.`);
+    }
     if (stagedOnly) await git(cwd, ['stash', 'push', '--staged', ...m]);
     else await git(cwd, ['stash', 'push', '-u', ...m, ...(paths?.length ? ['--', ...paths] : [])]);
   },
-  stashApply: (cwd, ref) => conflictAware(cwd, ['stash', 'apply', ref]),
-  stashPop: (cwd, ref) => conflictAware(cwd, ['stash', 'pop', ...(ref ? [ref] : [])]),
+  stashApply: (cwd, ref) => applyStash(cwd, ['stash', 'apply', ref], ref),
+  stashPop: (cwd, ref) => applyStash(cwd, ['stash', 'pop', ...(ref ? [ref] : [])], ref),
   async stashDrop(cwd, ref) {
     await git(cwd, ['stash', 'drop', ref]);
   },

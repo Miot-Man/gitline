@@ -4,7 +4,7 @@ import { computeGraph } from '../src/lib/graph';
 import { conflictLayout, conflictSides, hasMarkers, kindLabel, parseConflicts, resolved } from '../src/lib/conflicts';
 import { cleanTemplate } from '../src/lib/settings';
 import { branchCreated, checkoutMove, headMove, refsDeleted, sameHead } from '../src/lib/undo';
-import { parseTrack } from '../src/lib/format';
+import { ignoreLiteral, parseTrack } from '../src/lib/format';
 
 const DIFF = `diff --git a/f b/f
 index 1111111..2222222 100644
@@ -188,5 +188,14 @@ describe('undo entries', () => {
     const e = refsDeleted('x', [{ full: 'refs/heads/a', sha: '1' }, { full: 'refs/heads/b', sha: '2' }], a);
     expect(e.undo).toHaveLength(2);
     expect(sameHead(e.before, e.after)).toBe(true);
+  });
+});
+
+describe('ignoreLiteral', () => {
+  it('escapes glob characters and trailing spaces', () => {
+    expect(ignoreLiteral('src/a[1]*?.txt')).toBe('src/a\\[1]\\*\\?.txt');
+    expect(ignoreLiteral('back\\slash')).toBe('back\\\\slash');
+    expect(ignoreLiteral('notes  ')).toBe('notes\\ \\ ');
+    expect(ignoreLiteral('plain name.md')).toBe('plain name.md');
   });
 });
