@@ -137,6 +137,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
   const [coAuthors, setCoAuthors] = useState<Author[]>([]);
   const [gh, setGh] = useState<GhStatus | null>(null);
   const [prs, setPrs] = useState<PullRequest[]>([]);
+  // Why the last PR list load failed (often just a network blip); gh stays ok, so the next load retries.
+  const [prsError, setPrsError] = useState<string | null>(null);
   // Counts PR list loads, so an open PR panel reloads along with the list.
   const [prsLoaded, setPrsLoaded] = useState(0);
   const [ci, setCi] = useState<Record<string, CiStatus>>({});
@@ -218,11 +220,6 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     };
   }, [path, refreshAll, refreshStatus]);
 
-  useEffect(() => {
-    if (!active) return;
-    return api.onFocus(() => refreshAll());
-  }, [active, refreshAll]);
-
   // ---------- GitHub ----------
   const remotesKey = info?.remotes.join(',') ?? '';
   const loadPrs = useCallback(async () => {
@@ -233,10 +230,20 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     try {
       setPrs(await git<PullRequest[]>('ghPrs', path));
       setPrsLoaded((n) => n + 1);
+      setPrsError(null);
     } catch (e) {
-      setGh({ ok: false, reason: cleanError(e) });
+      setPrsError(cleanError(e));
     }
   }, [path]);
+
+  useEffect(() => {
+    if (!active) return;
+    return api.onFocus(() => {
+      refreshAll();
+      // Coming back to the window (say, after the Mac wakes) is a good moment to retry a failed PR load.
+      if (prsError) loadPrs();
+    });
+  }, [active, refreshAll, prsError, loadPrs]);
 
   useEffect(() => {
     if (!info) return;
@@ -1626,6 +1633,7 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
             laneColors={laneColors}
             prs={prs}
             gh={gh}
+            prsError={prsError}
             onPrClick={selectPr}
             onPrDoubleClick={checkoutPr}
             onPrMenu={prMenu}

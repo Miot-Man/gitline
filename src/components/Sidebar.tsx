@@ -15,6 +15,7 @@ interface Props {
   laneColors: Map<string, string>;
   prs: PullRequest[];
   gh: GhStatus | null;
+  prsError: string | null;
   onPrClick: (pr: PullRequest) => void;
   onPrDoubleClick: (pr: PullRequest) => void;
   onPrMenu: (e: React.MouseEvent, pr: PullRequest) => void;
@@ -174,7 +175,9 @@ export function Sidebar(props: Props) {
             'Pull requests',
             props.prs.length,
             props.gh.ok ? (
-              prs.length ? (
+              props.prsError ? (
+                <div className="side-note">{props.prsError}</div>
+              ) : prs.length ? (
                 prs.map((pr) => (
                   <div
                     key={pr.number}

@@ -661,3 +661,33 @@ test('a pull request opens in the side panel, where you can comment, review and 
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
 });
+
+test("a failed pull request load doesn't stick: refreshing tries again", async ({ gl }) => {
+  const { page } = gl;
+  gl.write('a.txt', '1\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Initial');
+  gl.git('remote', 'add', 'origin', 'https://github.com/example/repo.git');
+  const pr = {
+    number: 8,
+    title: 'Fix typo',
+    headRefName: 'fix',
+    headRefOid: gl.git('rev-parse', 'HEAD'),
+    baseRefName: 'main',
+    author: { login: 'mate' },
+    url: 'https://github.com/example/repo/pull/8',
+    isDraft: false,
+    reviewDecision: '',
+    statusCheckRollup: [],
+    isCrossRepository: false,
+  };
+  gl.setGh({ user: 'me', prs: [pr], fail: { 'pr list': 'error connecting to api.github.com' } });
+  await gl.open();
+  await expect(page.locator('.side-note', { hasText: 'error connecting to api.github.com' })).toBeVisible();
+
+  // The network comes back.
+  gl.setGh({ user: 'me', prs: [pr] });
+  await page.getByRole('button', { name: 'Refresh pull requests' }).click();
+  await expect(page.locator('.pr-item', { hasText: 'Fix typo' })).toBeVisible();
+  await expect(page.locator('.side-note', { hasText: 'error connecting' })).toHaveCount(0);
+});
