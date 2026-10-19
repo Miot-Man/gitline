@@ -34,6 +34,8 @@ export interface WipCounts {
   added: number;
   deleted: number;
   conflicted: number;
+  staged: number; // files with staged changes
+  unstaged: number; // files with changes not yet staged (including untracked and conflicted)
 }
 
 interface Props {
@@ -97,7 +99,10 @@ function metro(x1: number, y1: number, x2: number, y2: number, diagonalFirst: bo
   return diagonalFirst ? `M${x1} ${y1}L${x2} ${y1 + dx}V${y2}` : `M${x1} ${y1}V${y2 - dx}L${x2} ${y2}`;
 }
 
-const RowGraph = memo(function RowGraph({ item, width, isHead }: { item: GraphItem; width: number; isHead: boolean }) {
+// How much of the working tree is staged, for the uncommitted-changes node.
+type Staged = 'none' | 'some' | 'all';
+
+const RowGraph = memo(function RowGraph({ item, width, isHead, staged }: { item: GraphItem; width: number; isHead: boolean; staged?: Staged }) {
   const { commit, graph } = item;
   const { col, before, after, parentCols, beforeColors, afterColors } = graph;
   const mid = ROW_H / 2;
@@ -134,8 +139,16 @@ const RowGraph = memo(function RowGraph({ item, width, isHead }: { item: GraphIt
       <g fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
         {paths}
       </g>
-      {isWip ? (
-        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke="var(--orange)" strokeWidth={2} strokeDasharray="2.5 2" />
+      {isWip && staged === 'all' ? (
+        // Staged changes take their branch's color, so it's clear which branch the next commit lands on.
+        <circle cx={cx} cy={mid} r={R + 0.5} fill={color} stroke={color} strokeWidth={1.5} />
+      ) : isWip && staged === 'some' ? (
+        <g>
+          <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke={color} strokeWidth={2} strokeDasharray="2.5 2" />
+          <circle cx={cx} cy={mid} r={2.5} fill={color} />
+        </g>
+      ) : isWip ? (
+        <circle cx={cx} cy={mid} r={R} fill="var(--bg-graph)" stroke="var(--muted)" strokeWidth={2} strokeDasharray="2.5 2" />
       ) : isHead ? (
         <g>
           <circle cx={cx} cy={mid} r={R + 3.5} fill="none" stroke={color} strokeOpacity={0.35} strokeWidth={2.5} />
@@ -258,6 +271,7 @@ export function CommitGraph(props: Props) {
   const end = Math.min(items.length, Math.ceil((scrollTop + viewH) / ROW_H) + 8);
 
   const wipTotal = wip.modified + wip.added + wip.deleted + wip.conflicted;
+  const staged: Staged = !wip.staged ? 'none' : wip.unstaged ? 'some' : 'all';
   const rows: React.ReactElement[] = [];
   for (let i = start; i < end; i++) {
     const it = items[i];
@@ -286,7 +300,7 @@ export function CommitGraph(props: Props) {
         onContextMenu={(e) => props.onRowMenu(e, c)}
       >
         <div className="col-graph" style={{ width: graphW }}>
-          <RowGraph item={it} width={graphW} isHead={c.sha === headSha && !isWip} />
+          <RowGraph item={it} width={graphW} isHead={c.sha === headSha && !isWip} staged={isWip ? staged : undefined} />
         </div>
         <div className="col-msg">
           {pills.slice(0, MAX_TAGS).map((p) => (
@@ -302,6 +316,11 @@ export function CommitGraph(props: Props) {
               <span className="wip-label">
                 {wipTotal} uncommitted change{wipTotal === 1 ? '' : 's'}
               </span>
+              {wip.staged > 0 && (
+                <span className="wip-staged" title="Staged for the next commit on this branch">
+                  {staged === 'all' ? 'all' : wip.staged} staged
+                </span>
+              )}
               {props.wipFiles.length > 0 && (
                 <span className="wip-files">
                   · {props.wipFiles.slice(0, 3).join(', ')}

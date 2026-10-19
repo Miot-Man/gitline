@@ -555,6 +555,20 @@ pre {
   gap: 6px;
   min-width: 0;
 }
+/* When space runs out the current crumb gives way first (down to a few characters), then the links;
+   each truncates with an ellipsis instead of spilling over its neighbours. */
+.trail-item:last-child {
+  flex-shrink: 1000;
+  min-width: 5em;
+}
+.trail-sep {
+  flex: none;
+}
+.trail-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .trail-muted,
 .trail-link {
   color: var(--muted);
@@ -1069,7 +1083,23 @@ pre {
   gap: 10px;
 }
 .wip-label {
-  color: var(--orange);
+  /* Neutral, so unstaged work never looks like it belongs to a branch (lane colors are all hues). */
+  color: var(--text);
+}
+.wip-staged {
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--lane) 45%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--lane) 14%, transparent);
+  color: var(--lane);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+:root[data-theme='light'] .wip-staged {
+  color: color-mix(in srgb, var(--lane) 60%, #000);
 }
 .wip-files {
   color: var(--muted);

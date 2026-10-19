@@ -368,7 +368,8 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     let added = 0;
     let deleted = 0;
     all.forEach((s) => (s === 'A' || s === '?' ? added++ : s === 'D' ? deleted++ : modified++));
-    return { modified, added, deleted, conflicted: status.conflicted.length };
+    const unstaged = new Set([...status.unstaged, ...status.conflicted].map((f) => f.path)).size;
+    return { modified, added, deleted, conflicted: status.conflicted.length, staged: status.staged.length, unstaged };
   }, [status]);
 
   const currentRef = refs.find((r) => r.type === 'local' && r.isHead);
