@@ -330,10 +330,16 @@ test('a runaway commit title or body stays contained, and the message can be edi
   gl.write('f.txt', '0\n');
   gl.git('add', '.');
   gl.git('commit', '-qm', 'Base');
+  // Messages go in through a file (outside the repo): as arguments they'd pass Windows' 32 KB command-line limit.
+  const msg = path.join(gl.repo, '..', 'msg.txt');
+  const commit = (m: string) => {
+    fs.writeFileSync(msg, m);
+    gl.git('commit', '-qa', '-F', msg);
+  };
   gl.write('f.txt', '1\n');
-  gl.git('commit', '-qam', words);
+  commit(words);
   gl.write('f.txt', '2\n');
-  gl.git('commit', '-qam', 'After', '-m', `${words}\n\n${'x'.repeat(5000)}`);
+  commit(`After\n\n${words}\n\n${'x'.repeat(5000)}`);
   await gl.open();
 
   // A runaway body scrolls in its own box and wraps even unbroken strings.
