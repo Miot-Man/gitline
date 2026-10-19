@@ -143,6 +143,35 @@ describe('interactive rebase', () => {
     expect(read(dir, 'f')).toBe('local edit\n');
   });
 
+  it('commits and rewords messages far past the command-line limit', async () => {
+    const dir = await tmpRepo();
+    const huge = 'lorem ipsum dolor sit amet '.repeat(20000).trim(); // 100,000 words, about 540 KB
+    write(dir, 'f', '0\n');
+    await ops.stage(dir, ['f']);
+    await ops.commit(dir, huge, huge);
+    expect(sh(dir, 'log', '-1', '--format=%B')).toBe(`${huge}\n\n${huge}`);
+    expect((await ops.log(dir))[0].subject).toBe(huge);
+    expect((await ops.commitDetails(dir, 'HEAD')).message).toBe(`${huge}\n\n${huge}`);
+    await ops.rewordHead(dir, `Short\n\n${huge}`);
+    expect(sh(dir, 'log', '-1', '--format=%s')).toBe('Short');
+    await ops.createTag(dir, 'v1', 'HEAD', huge);
+    expect(sh(dir, 'tag', '-l', '--format=%(contents)', 'v1')).toBe(huge);
+  });
+
+  it('rewords the last commit without taking in staged changes', async () => {
+    const dir = await tmpRepo();
+    write(dir, 'f', '0\n');
+    await commitAll(dir, 'base');
+    write(dir, 'f', '1\n');
+    await commitAll(dir, 'word '.repeat(10000).trim());
+    write(dir, 'g', 'staged\n');
+    await ops.stage(dir, ['g']);
+    await ops.rewordHead(dir, 'Short title\n\nThe long text, moved into the body.');
+    expect(sh(dir, 'log', '-1', '--format=%B')).toBe('Short title\n\nThe long text, moved into the body.');
+    expect(sh(dir, 'show', '--name-only', '--format=', 'HEAD')).toBe('f');
+    expect((await ops.status(dir)).staged).toEqual([{ path: 'g', status: 'A', oldPath: undefined }]);
+  });
+
   it('rejects a base that is not an ancestor', async () => {
     const dir = await tmpRepo();
     write(dir, 'f', '0\n');

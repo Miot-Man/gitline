@@ -1122,6 +1122,33 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
     );
   };
 
+  // Rewrites one commit's message: an amend for the branch tip, otherwise a rebase that rewords just that commit.
+  const editMessage = async (c: Commit) => {
+    const short = c.sha.slice(0, 7);
+    const cur = info?.branch ?? 'HEAD';
+    const isHead = c.sha === info?.head;
+    let current: string;
+    let plan: RebaseCommit[] = [];
+    try {
+      // Check the rebase is possible before asking for a message.
+      if (!isHead) plan = await git<RebaseCommit[]>('rebasePlan', path, c.parents[0]);
+      current = (await git<CommitDetails>('commitDetails', path, c.sha)).message;
+    } catch (e) {
+      return ui.toast(cleanError(e), 'error');
+    }
+    const message = await ui.prompt({ title: `Edit message of ${short}`, label: 'Commit message', initial: current, multiline: true, confirmText: 'Save Message' });
+    if (message === null || !message.trim() || message.trim() === current.trim()) return;
+    if (isHead) {
+      return tracked('Saving message…', () => git('rewordHead', path, message), `Edited message of ${short}`, (b, a) =>
+        headMove(`Edit message of ${short}`, b, a, 'soft')
+      );
+    }
+    const steps: RebaseStep[] = plan.map((p) => (p.sha === c.sha ? { sha: p.sha, action: 'reword', message } : { sha: p.sha, action: 'pick' }));
+    return tracked('Saving message…', () => git('interactiveRebase', path, c.parents[0], steps), `Edited message of ${short}`, (b, a) =>
+      headMove(`Edit message of ${short} on ${cur}`, b, a, 'keep')
+    );
+  };
+
   // ---------- context menus ----------
   const rowMenu = (e: React.MouseEvent, c: Commit) => {
     if (c.sha === WIP) {
@@ -1161,6 +1188,12 @@ export function RepoView({ path, active, command, onRepoMenu, appCommands, onOpe
       { label: `Reset ${cur} to this commit — Hard`, onClick: () => resetTo(c.sha, 'hard'), danger: true },
       'sep',
       { label: `Interactive rebase ${cur} from here…`, disabled: !info?.branch || c.sha === info?.head, onClick: () => startInteractiveRebase(c.sha) },
+      {
+        label: 'Edit commit message…',
+        // Older commits are reworded by rebasing onto their parent, which the very first commit doesn't have.
+        disabled: !info?.branch || (c.sha !== info.head && !c.parents.length),
+        onClick: () => editMessage(c),
+      },
       { label: 'Compare with HEAD', disabled: !info?.head || c.sha === info?.head, onClick: () => compareWithHead(c.sha) },
       ...(bisect
         ? [

@@ -1413,9 +1413,27 @@ pre {
   line-height: 1.35;
   word-wrap: break-word;
 }
+.commit-subject.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.commit-subject.scroll {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.subject-toggle {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: var(--font);
+  font-size: 12px;
+}
 .commit-body {
   margin: 8px 0 0;
   white-space: pre-wrap;
+  /* Long unbroken strings (URLs, hashes, pasted junk) wrap instead of scrolling sideways. */
+  overflow-wrap: anywhere;
   font-family: var(--font);
   color: var(--text);
   max-height: 220px;
@@ -2503,6 +2521,7 @@ kbd {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rebase-into {
   margin-right: 4px;

@@ -34,7 +34,7 @@ export const write = (dir: string, file: string, content: string) => {
 };
 export const read = (dir: string, file: string) => fs.readFileSync(path.join(dir, file), 'utf8');
 
-export const sh = (dir: string, ...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+export const sh = (dir: string, ...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim();
 
 export async function commitAll(dir: string, message: string) {
   await ops.stageAll(dir);

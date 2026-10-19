@@ -324,6 +324,41 @@ test('choosing a side scrolls the result to that conflict', async ({ gl }) => {
   await expect.poll(scrollTop).toBe(0);
 });
 
+test('a runaway commit title or body stays contained, and the message can be edited', async ({ gl }) => {
+  const { page } = gl;
+  const words = 'lorem ipsum dolor sit amet '.repeat(2000).trim();
+  gl.write('f.txt', '0\n');
+  gl.git('add', '.');
+  gl.git('commit', '-qm', 'Base');
+  gl.write('f.txt', '1\n');
+  gl.git('commit', '-qam', words);
+  gl.write('f.txt', '2\n');
+  gl.git('commit', '-qam', 'After', '-m', `${words}\n\n${'x'.repeat(5000)}`);
+  await gl.open();
+
+  // A runaway body scrolls in its own box and wraps even unbroken strings.
+  await row(page, 'After').click();
+  await expect(page.locator('.commit-body')).toBeVisible();
+  await expect(page.locator('.commit-author')).toBeInViewport();
+  expect(await page.locator('.commit-body').evaluate((b) => b.scrollWidth <= b.clientWidth)).toBe(true);
+
+  await row(page, 'lorem ipsum').click();
+  await expect(page.locator('.commit-subject.clamped')).toBeVisible();
+  // The author and files stay in view under the collapsed title.
+  await expect(page.locator('.commit-author')).toBeInViewport();
+  await page.locator('.subject-toggle', { hasText: 'Show all 10,000 words' }).click();
+  await expect(page.locator('.commit-subject.scroll')).toBeVisible();
+
+  await row(page, 'lorem ipsum').click({ button: 'right' });
+  await page.locator('.menu-item', { hasText: 'Edit commit message' }).click();
+  await page.locator('.modal textarea').fill('Fix the thing');
+  await page.locator('.modal').getByRole('button', { name: 'Save Message' }).click();
+  await expect(row(page, 'Fix the thing')).toBeVisible();
+  expect(gl.git('log', '--format=%s').split('\n')).toEqual(['After', 'Fix the thing', 'Base']);
+  // Rewording an older commit keeps the later commits' messages intact.
+  expect(gl.git('log', '-1', '--format=%b')).toContain('x'.repeat(5000));
+});
+
 test('interactive rebase fixes up a commit', async ({ gl }) => {
   const { page } = gl;
   gl.write('f.txt', '0\n');

@@ -435,10 +435,15 @@ interface CommitPanelProps {
   onStashAction: (action: 'apply' | 'pop' | 'drop') => void;
 }
 
+// Titles longer than this (about four lines in the panel) are collapsed.
+const LONG_SUBJECT = 200;
+
 export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSelectSha, onFileMenu, toast, stash, onStashAction }: CommitPanelProps) {
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fullSubject, setFullSubject] = useState(false);
   useFileStepper(details?.sha === sha ? details.files : [], activePath, (f) => details && onOpenDiff(details, f));
+  useEffect(() => setFullSubject(false), [sha]);
 
   useEffect(() => {
     let alive = true;
@@ -506,7 +511,13 @@ export function CommitPanel({ repo, sha, version, activePath, onOpenDiff, onSele
         </span>
       </div>
       <div className="commit-message">
-        <div className="commit-subject">{subject}</div>
+        {/* A runaway title (thousands of words) would push everything else out of the panel. */}
+        <div className={`commit-subject${subject.length > LONG_SUBJECT ? (fullSubject ? ' scroll' : ' clamped') : ''}`}>{subject}</div>
+        {subject.length > LONG_SUBJECT && (
+          <a className="link subject-toggle" onClick={() => setFullSubject((v) => !v)}>
+            {fullSubject ? 'Show less' : `Show all ${subject.split(/\s+/).length.toLocaleString()} words`}
+          </a>
+        )}
         {body && <pre className="commit-body">{body}</pre>}
       </div>
       <div className="commit-author">

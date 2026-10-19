@@ -540,11 +540,14 @@ const ops = {
     } catch {}
     fs.writeFileSync(file, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + pattern + '\n');
   },
+  // Messages go through stdin: as arguments they'd hit the command-line limit (about 32 KB on Windows).
   async commit(cwd, summary, description, amend) {
-    const args = ['commit', '-q', '-m', summary];
-    if (description && description.trim()) args.push('-m', description.trim());
-    if (amend) args.push('--amend');
-    await git(cwd, args);
+    const message = description && description.trim() ? `${summary}\n\n${description.trim()}` : summary;
+    await gitInput(cwd, ['commit', '-q', ...(amend ? ['--amend'] : []), '-F', '-'], message);
+  },
+  // Replaces the last commit's message only: `--only` with no paths leaves anything staged out of it.
+  async rewordHead(cwd, message) {
+    await gitInput(cwd, ['commit', '-q', '--amend', '--only', '--allow-empty', '-F', '-'], message);
   },
 
   // ---- branches / refs ----
@@ -1041,7 +1044,7 @@ const ops = {
 
   // ---- tags ----
   async createTag(cwd, name, sha, message) {
-    if (message) await git(cwd, ['tag', '-a', name, '-m', message, sha]);
+    if (message) await gitInput(cwd, ['tag', '-a', name, '-F', '-', sha], message);
     else await git(cwd, ['tag', name, sha]);
   },
   async deleteTag(cwd, name) {
